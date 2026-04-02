@@ -1,40 +1,57 @@
-# Quick start - SaveState (Lite) + Pro
+# Quick start
 
-## 1. Install
-
-- **Lite only:** copy `addons/savestate/` into your project.
-- **Pro:** copy **both** `addons/savestate/` and `addons/savestate_pro/`.
-
-## 2. Enable plugins
-
-**Project → Project Settings → Plugins**
-
-1. Enable **SaveState (Lite)** first (provides the Save Browser dock and autoload registration).
-2. Enable **SaveState Pro** second if you bought Pro.
-
-If Pro was enabled first, the Pro plugin may add Lite to your enabled list automatically — **restart the editor** when prompted so Lite loads.
-
-## 3. Save Browser (editor)
-
-After Lite loads, open the **Save Browser** dock (tab name may vary).
-
-- **Explorer** — lists saves under `SaveManager.save_root`
-- **Data** — edit decoded payload (commit and Live Sync need Pro)
-- **Config** — JSON vs binary, backup toggle; Pro adds encryption key generation
-
-## 4. Pro-only workflow (optional)
-
-- **Config:** generate AES/HMAC keys when you want encrypted saves.
-- **Inspector:** select a `Saveable` node, then use the property picker and optional `savestate_*` metadata on the parent.
-- **Tools:** **SaveState Pro → Quick Setup: Add Saveable to selection**
-
-## 5. Minimal runtime example
+## First save (key-value)
 
 ```gdscript
-SaveManager.set_value(&"gold", 420)
+SaveManager.set_value(&"player_gold", 100)
 SaveManager.persist()
-
-# Pro: use persist_async() from pro_manager.gd (connect to signals as needed)
 ```
 
-Use `save_to_slot_sync` / `load_from_slot_sync` for named slots (see `addons/savestate/save_manager.gd`).
+## First load (key-value)
+
+```gdscript
+var g := int(SaveManager.get_value(&"player_gold", 0))
+```
+
+## Mark a node for saving (Lite)
+
+Add the node to group `savestate_saveable`. Implement:
+
+```gdscript
+func get_storage_key() -> StringName:
+    return &"player"
+func collect_snapshot() -> Dictionary:
+    return {"hp": hp, "pos": global_position}
+func apply_snapshot(data: Dictionary) -> void:
+    if data.has("hp"): hp = int(data["hp"])
+    if data.has("pos"): global_position = data["pos"]
+```
+
+Then `SaveManager.persist_including_saveables()`.
+
+## Restore from backup
+
+Save Browser: **Restore from .bak**, or:
+
+```gdscript
+SaveManager.restore_from_backup_file("user://savestate/slot_0.bin")
+```
+
+## New field after old saves exist
+
+Bump `savestate/current_version`, then:
+
+```gdscript
+SaveManager.set_default_state_for_migration({"new_stat": 0})
+```
+
+Load as usual.
+
+## Named slot
+
+```gdscript
+SaveManager.save_to_slot_sync(&"slot_2", {"k": 1})
+var d := SaveManager.load_from_slot_sync(&"slot_2")
+```
+
+Pro: [chuumberry.itch.io/savestate-pro](https://chuumberry.itch.io/savestate-pro)
