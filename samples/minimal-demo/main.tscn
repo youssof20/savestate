@@ -1,0 +1,59 @@
+[gd_scene load_steps=4 format=3 uid="uid://savestate_minimal_main"]
+
+[ext_resource type="Script" path="res://main.gd" id="1_main"]
+[ext_resource type="Script" path="res://player.gd" id="2_player"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_player"]
+size = Vector2(28, 28)
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Player" type="CharacterBody2D" parent="."]
+position = Vector2(400, 300)
+script = ExtResource("2_player")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Player"]
+shape = SubResource("RectangleShape2D_player")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="UI" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/UI"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="GoldLabel" type="Label" parent="CanvasLayer/UI/VBox"]
+layout_mode = 2
+text = "Gold: 0"
+
+[node name="AddGoldBtn" type="Button" parent="CanvasLayer/UI/VBox"]
+layout_mode = 2
+text = "+10 Gold"
+
+[node name="SaveBtn" type="Button" parent="CanvasLayer/UI/VBox"]
+layout_mode = 2
+text = "Save"
+
+[node name="LoadBtn" type="Button" parent="CanvasLayer/UI/VBox"]
+layout_mode = 2
+text = "Load"
+
+[connection signal="pressed" from="CanvasLayer/UI/VBox/AddGoldBtn" to="." method="_on_add_gold_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/SaveBtn" to="." method="_on_save_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/LoadBtn" to="." method="_on_load_pressed"]

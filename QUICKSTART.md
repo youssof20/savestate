@@ -55,3 +55,11 @@ var d := SaveManager.load_from_slot_sync(&"slot_2")
 ```
 
 Pro: [chuumberry.itch.io/savestate-pro](https://chuumberry.itch.io/savestate-pro)
+
+## Starter sample project
+
+Open `samples/minimal-demo/` as a Godot project (moving player + gold + Save/Load). See [samples/minimal-demo/README.md](samples/minimal-demo/README.md).
+
+## Docs index
+
+- [Full API](docs/API.md) · [Architecture & threading](docs/ARCHITECTURE.md) · [Migration & `migration_required`](docs/MIGRATION.md)
