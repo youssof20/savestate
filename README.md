@@ -9,7 +9,7 @@ Two pieces work together:
 
 **Made by [chuumberry](https://itch.io/profile/chuumberry)** · Godot **4.3+** (tested on **4.6**)
 
-**Source:** [github.com/youssof20/savestate](https://github.com/youssof20/savestate) — MIT, see [`LICENSE`](LICENSE). **`addons/savestate_pro/`** is gitignored here so it is not pushed to that remote; Pro stays closed and is sold on [itch.io](https://itch.io/profile/chuumberry).
+**Source:** [github.com/youssof20/savestate](https://github.com/youssof20/savestate) — MIT, see [`LICENSE`](LICENSE). **`addons/savestate_pro/`** is gitignored here so it is not pushed to that remote; **Pro** is sold separately: **[SaveState Pro on itch.io](https://chuumberry.itch.io/savestate-pro)**.
 
 ---
 
@@ -27,7 +27,7 @@ Two pieces work together:
 2. In Plugins, enable **SaveState (Lite)** first, then **SaveState Pro**.
 3. If the editor asks you to restart, do it — that makes sure Lite loads before Pro.
 
-Pro is available from **chuumberry** on [itch.io](https://itch.io/profile/chuumberry).
+Get **SaveState Pro** here: **[chuumberry.itch.io/savestate-pro](https://chuumberry.itch.io/savestate-pro)**.
 
 ---
 
