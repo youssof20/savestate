@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- **Sample:** `samples/minimal-demo/` no longer duplicates Lite; copy `addons/savestate` from the repo root (or from `savestate-lite-*.zip`). See `samples/minimal-demo/addons/README.txt`.
+
 ## 1.1.1
 
 - **Lite:** `save_manager.gd` no longer references Pro-only `SaveSecurity`. Encrypted-save inspection for the Save Browser uses `addons/savestate/encrypted_save_reader.gd`, so pure Lite projects (including `samples/minimal-demo/`) compile again.

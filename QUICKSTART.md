@@ -58,7 +58,7 @@ Pro: [chuumberry.itch.io/savestate-pro](https://chuumberry.itch.io/savestate-pro
 
 ## Starter sample project
 
-Open `samples/minimal-demo/` as a Godot project (moving player + gold + Save/Load). See [samples/minimal-demo/README.md](samples/minimal-demo/README.md).
+Open `samples/minimal-demo/` after copying repo **`addons/savestate`** into `samples/minimal-demo/addons/`. See [samples/minimal-demo/README.md](samples/minimal-demo/README.md).
 
 ## Docs index
 

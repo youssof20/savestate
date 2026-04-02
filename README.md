@@ -25,7 +25,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 2. **Project → Project Settings → Plugins** → enable **SaveState (Lite)**.
 3. The **SaveManager** autoload is registered (`res://addons/savestate/save_manager.gd`).
 
-**SaveState Pro:** requires **both** `addons/savestate/` and `addons/savestate_pro/`. If Lite is missing, the Pro plugin **does not** register autoload or tools (avoids a half-broken editor state). Copy both folders, then enable both plugins.
+**SaveState Pro** (paid, separate from this repo) requires both Lite and the Pro plugin folder in your project. See [itch.io](https://chuumberry.itch.io/savestate-pro).
+
+**GitHub Releases** attach **`savestate-lite-<tag>.zip`** (drop-in `addons/savestate/`).
 
 ---
 

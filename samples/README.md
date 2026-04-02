@@ -2,6 +2,6 @@
 
 | Project | Purpose |
 |--------|---------|
-| [minimal-demo](minimal-demo/README.md) | **Starter dungeon–sized** demo: moving player, gold, Save/Load buttons, `migration_required` print hook — open as its own Godot project. |
+| [minimal-demo](minimal-demo/README.md) | Small demo: move, gold, Save/Load — copy repo **`addons/savestate`** into `minimal-demo/addons/` first (see sample README). |
 
-The **full addon source** lives at repo root: `addons/savestate/` (Lite). The minimal sample **bundles a copy** of Lite so the folder opens and runs without extra steps.
+Canonical Lite sources: **`addons/savestate/`** at the repository root. Release builds: **`savestate-lite-*.zip`** on GitHub Releases.
