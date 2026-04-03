@@ -27,7 +27,7 @@ See [CHANGELOG.md](CHANGELOG.md) — each version lists **Lite** (this repo) and
 
 **SaveState Pro** (paid, separate from this repo) requires both Lite and the Pro plugin folder in your project. See [itch.io](https://chuumberry.itch.io/savestate-pro).
 
-**GitHub Releases** attach **`savestate-lite-<tag>.zip`** (drop-in `addons/savestate/`).
+**GitHub Releases** attach **`savestate-lite-<tag>.zip`** (drop-in `addons/savestate/`). Pushing a new tag `v*` triggers Actions to open the release and upload the zip. To **create or refresh** releases for existing tags (notes + zip), run **`tools/publish_github_releases.ps1`** from the repo root with **`GITHUB_TOKEN`** set to a PAT with repo **Contents** read/write (see the script header).
 
 ---
 
