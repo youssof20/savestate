@@ -56,6 +56,16 @@ var d := SaveManager.load_from_slot_sync(&"slot_2")
 
 Pro: [chuumberry.itch.io/savestate-pro](https://chuumberry.itch.io/savestate-pro)
 
+## v1.2 snippets
+
+```gdscript
+SaveManager.register_key(&"gold", TYPE_INT, 0)
+SaveManager.set_schema_migrations([func(d): d["mana"] = d.get("mana", 100)])
+SaveManager.mark_dirty()  # debounced persist
+```
+
+Drop-in menu: instance `res://addons/savestate/templates/save_menu_lite.tscn`.
+
 ## Starter sample project
 
 Open `samples/minimal-demo/` after copying repo **`addons/savestate`** into `samples/minimal-demo/addons/`. See [samples/minimal-demo/README.md](samples/minimal-demo/README.md).

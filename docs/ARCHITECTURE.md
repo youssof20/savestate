@@ -25,3 +25,10 @@ Embedded `schema_version` in each file is compared to Project Settings `savestat
 ## Godot threading notes
 
 Godot 4’s `WorkerThreadPool` is used for bounded parallel tasks; SaveState Pro does not spin ad-hoc `Thread` instances per save. The snapshot boundary is what keeps save data deterministic relative to the frame where you requested the save.
+
+## v1.2 — typed keys, dirty debounce, migration pipeline
+
+- **Typed KV:** optional `register_key` stores expected `typeof` for `set_value`; mismatches log and skip the write (int/float treated as compatible).
+- **mark_dirty:** a one-shot `Timer` on the autoload coalesces many `mark_dirty()` calls into one `_execute_debounced_persist()` after `auto_save_debounce_sec`. Lite runs sync `persist` / `persist_including_saveables`; Pro overrides to `persist_async`.
+- **Migrations:** after `deep_merge` with defaults, `set_schema_migrations` callables run in order for each schema step up to `savestate/current_version`. The file’s original schema is still what triggers `migration_required`.
+- **JSON export:** uses the same read path as gameplay (`_post_read_transform` + parse), so Pro-encrypted files decode in the editor when project keys are available.

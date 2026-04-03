@@ -7,6 +7,8 @@ Godot 4 addon: **atomic** save files, rolling **`.bak`** backups, **schema versi
 
 **Docs:** [Quick start](QUICKSTART.md) · [Full API](docs/API.md) · [Architecture & threading](docs/ARCHITECTURE.md) · [Migration (incl. `migration_required`)](docs/MIGRATION.md) · [Starter sample](samples/minimal-demo/README.md)
 
+**v1.2:** typed `register_key` (with optional Save Browser color hints), `register_editor_hint`, debounced `mark_dirty`, `set_schema_migrations`, JSON export, `SaveComponent` / `CollectionLink` / `SaveStatePickupVacuum`, slot import/export helpers, Save Browser color picker + `SaveStateUnixDisplay`, `save_menu_lite.tscn`, and Pro `templates/save_menu_pro.tscn`.
+
 ---
 
 ## Why this exists
@@ -20,6 +22,8 @@ See [CHANGELOG.md](CHANGELOG.md) — each version lists **Lite** (this repo) and
 ---
 
 ## Installation
+
+The **repository root** is not a Godot project (there is no `project.godot` there). Either open **`samples/minimal-demo`** after you copy the addon into it (see that folder’s README), or copy **`addons/savestate/`** into **your** game project’s `addons/` folder.
 
 1. Copy the `addons/savestate/` folder into your Godot project (merge with `addons/`).
 2. **Project → Project Settings → Plugins** → enable **SaveState (Lite)**.
@@ -65,7 +69,7 @@ Pro swaps the autoload for `pro_manager.gd`, adds async save/load, optional AES-
 
 ## Godot version support
 
-Godot **4.3**, **4.4**, **4.5**, **4.6** tested and supported.
+Godot **4.3**, **4.4**, **4.5**, and **4.6** are tested and supported. The addons use stable 4.x APIs (`DirAccess.remove_absolute`, `FileAccess.get_modified_time`, `Time.get_datetime_string_from_unix_time`, `ColorPickerButton`, etc.) as documented for those versions; Lite and Pro `plugin.cfg` files note this range.
 
 ---
 

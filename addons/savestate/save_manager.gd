@@ -19,6 +19,10 @@ signal migration_required(old_schema_version: int, new_schema_version: int)
 const FLAG_JSON: int = 1
 const FORMAT_VERSION: int = 1
 const _EncryptedSaveReader := preload("res://addons/savestate/encrypted_save_reader.gd")
+## Pass to [method register_key] as the 4th argument: auto-pick editor hint from [param expected_type], or force none / color for Save Browser.
+const KV_EDITOR_HINT_AUTO := -1
+const KV_EDITOR_HINT_NONE := 0
+const KV_EDITOR_HINT_COLOR := 1
 
 const SETTING_SCHEMA_VERSION := "savestate/current_version"
 ## Reserved slot for [method set_value] / [method get_value] / [method persist]. Avoid using [code]slot_0[/code] for unrelated data, or call [method clear_kv_cache] first.
@@ -36,6 +40,21 @@ var _default_state: Dictionary = {}
 var _kv_data: Dictionary = {}
 var _kv_hydrated: bool = false
 var _debug_capture_registered: bool = false
+## v1.2: [StringName -> int] expected [method @GlobalScope.typeof] for [method set_value] validation.
+var _kv_types: Dictionary = {}
+## v1.2: defaults used when a registered key is missing from loaded data / [method get_value].
+var _kv_registered_defaults: Dictionary = {}
+## v1.2: ordered callables; entry at index [code]i[/code] runs when upgrading from schema [code]i + 1[/code] to [code]i + 2[/code].
+var _schema_migrations: Array = []
+var _dirty_pending: bool = false
+var _dirty_timer: Timer
+## Flat key path (e.g. [code]player.tint[/code]) → [constant KV_EDITOR_HINT_COLOR]. Persisted next to saves as [code].savestate_editor_hints.json[/code].
+var _editor_flat_hints: Dictionary = {}
+
+## After [method mark_dirty], wait this many seconds of silence before [method _execute_debounced_persist] (default sync persist; Pro overrides for async).
+@export var auto_save_debounce_sec: float = 2.0
+## When true, debounced flush calls [method persist_including_saveables] / Pro async equivalent instead of KV-only [method persist].
+@export var dirty_persist_includes_saveables: bool = false
 
 
 func _ready() -> void:
@@ -44,6 +63,8 @@ func _ready() -> void:
 		ProjectSettings.set_setting(SETTING_SCHEMA_VERSION, 1)
 	_register_reserved_kv_slot()
 	_register_live_edit_debugger_capture()
+	_setup_dirty_timer()
+	_load_editor_hints_from_disk()
 
 
 func _register_live_edit_debugger_capture() -> void:
@@ -95,14 +116,231 @@ func _register_reserved_kv_slot() -> void:
 
 
 ## One-line style storage: [code]set_value[/code] / [code]get_value[/code], then [method persist] to flush [code]slot_0[/code] to disk.
+## If [method register_key] was used, type must match or an error is logged and the write is skipped.
 func set_value(key: StringName, value: Variant) -> void:
 	_hydrate_kv_if_needed()
+	if _kv_types.has(key):
+		var exp_type: int = int(_kv_types[key])
+		if not _value_matches_registered_type(value, exp_type):
+			push_error(
+				"SaveState: set_value(%s) type mismatch — expected Variant.Type %s, got %s"
+				% [str(key), str(exp_type), str(typeof(value))]
+			)
+			return
 	_kv_data[key] = value
 
 
 func get_value(key: StringName, default: Variant = null) -> Variant:
 	_hydrate_kv_if_needed()
-	return _kv_data.get(key, default)
+	if _kv_data.has(key):
+		return _kv_data[key]
+	if _kv_registered_defaults.has(key):
+		return _kv_registered_defaults[key]
+	return default
+
+
+## v1.2: lock a KV key to a [method @GlobalScope.typeof] and optional default (used when the key is absent after load).
+## [param editor_value_hint]: [constant KV_EDITOR_HINT_AUTO] maps [constant TYPE_COLOR] → Save Browser color picker; use [constant KV_EDITOR_HINT_NONE] to skip.
+func register_key(
+		key: StringName,
+		expected_type: int,
+		default_value: Variant = null,
+		editor_value_hint: int = KV_EDITOR_HINT_AUTO
+	) -> void:
+	_kv_types[key] = expected_type
+	if typeof(default_value) != TYPE_NIL:
+		if not _value_matches_registered_type(default_value, expected_type):
+			push_warning("SaveState: register_key(%s) default value type does not match expected_type" % str(key))
+		_kv_registered_defaults[key] = default_value
+	var hint := editor_value_hint
+	if hint == KV_EDITOR_HINT_AUTO:
+		hint = KV_EDITOR_HINT_COLOR if expected_type == TYPE_COLOR else KV_EDITOR_HINT_NONE
+	if hint != KV_EDITOR_HINT_NONE:
+		register_editor_hint(str(key), hint)
+
+
+func unregister_key(key: StringName) -> void:
+	_kv_types.erase(key)
+	_kv_registered_defaults.erase(key)
+	_editor_flat_hints.erase(str(key))
+	_save_editor_hints_to_disk()
+
+
+## v1.2: Save Browser metadata for nested keys (dot path). [constant KV_EDITOR_HINT_COLOR] shows a color picker in the Data tab.
+func register_editor_hint(flat_path: String, hint: int) -> void:
+	if flat_path.is_empty():
+		return
+	_editor_flat_hints[flat_path] = hint
+	_save_editor_hints_to_disk()
+
+
+func unregister_editor_hint(flat_path: String) -> void:
+	_editor_flat_hints.erase(flat_path)
+	_save_editor_hints_to_disk()
+
+
+func get_editor_hints_copy() -> Dictionary:
+	return _editor_flat_hints.duplicate(true)
+
+
+func _editor_hints_storage_path() -> String:
+	return save_root.path_join(".savestate_editor_hints.json")
+
+
+func _load_editor_hints_from_disk() -> void:
+	var p := _editor_hints_storage_path()
+	if not FileAccess.file_exists(p):
+		return
+	var txt := FileAccess.get_file_as_string(p)
+	var j: Variant = JSON.parse_string(txt)
+	if typeof(j) != TYPE_DICTIONARY:
+		return
+	for k in j:
+		_editor_flat_hints[str(k)] = int(j[k])
+
+
+func _save_editor_hints_to_disk() -> void:
+	_ensure_save_root()
+	var f := FileAccess.open(_editor_hints_storage_path(), FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify(_editor_flat_hints, "\t"))
+	f.close()
+
+
+## Snapshot current KV + [code]__saveables[/code] into [param slot_id] (creates slot file if needed).
+func export_current_to_slot(slot_id: StringName) -> Error:
+	if not _slots.has(slot_id):
+		ensure_slot_for_file_base(slot_id, str(slot_id))
+	_hydrate_kv_if_needed()
+	var merged := _kv_data.duplicate(true)
+	merged["__saveables"] = gather_saveable_snapshots()
+	return save_to_slot_sync(slot_id, merged)
+
+
+## Load [param slot_id] into runtime KV and apply saveables bundle.
+func import_slot_into_runtime(slot_id: StringName) -> Error:
+	var slot: SaveSlot = _slots.get(slot_id) as SaveSlot
+	if slot == null:
+		var base := str(slot_id)
+		ensure_slot_for_file_base(slot_id, base)
+		slot = _slots.get(slot_id) as SaveSlot
+	if slot == null:
+		return ERR_DOES_NOT_EXIST
+	var path := slot.get_file_path(save_root, use_json)
+	if not FileAccess.file_exists(path):
+		return ERR_FILE_NOT_FOUND
+	var inner := load_from_slot_sync(slot_id)
+	var bundle: Variant = inner.get("__saveables", {})
+	var kv := inner.duplicate(true)
+	kv.erase("__saveables")
+	replace_kv_data(kv)
+	load_requested.emit()
+	if bundle is Dictionary:
+		apply_saveables_from_bundle(bundle as Dictionary)
+	return OK
+
+
+## v1.2: ordered migration steps. Index [code]0[/code] runs when upgrading a file from schema 1 → 2, index [code]1[/code] for 2 → 3, etc. Each callable receives the inner [Dictionary] (mutate in place).
+func set_schema_migrations(migrations: Array) -> void:
+	_schema_migrations = migrations.duplicate()
+
+
+func clear_schema_migrations() -> void:
+	_schema_migrations.clear()
+
+
+## v1.2: debounced autosave — call instead of [method persist] every frame. Batches rapid changes into one flush after [member auto_save_debounce_sec] seconds of quiet.
+func mark_dirty() -> void:
+	_dirty_pending = true
+	_dirty_timer.stop()
+	var wait := maxf(0.05, auto_save_debounce_sec)
+	_dirty_timer.wait_time = wait
+	_dirty_timer.start()
+
+
+func _setup_dirty_timer() -> void:
+	_dirty_timer = Timer.new()
+	_dirty_timer.one_shot = true
+	_dirty_timer.autostart = false
+	add_child(_dirty_timer)
+	_dirty_timer.timeout.connect(_on_dirty_timer_timeout)
+
+
+func _on_dirty_timer_timeout() -> void:
+	if not _dirty_pending:
+		return
+	_dirty_pending = false
+	_execute_debounced_persist()
+
+
+## Virtual: Pro overrides to call [method persist_async] instead of sync [method persist].
+func _execute_debounced_persist() -> void:
+	if dirty_persist_includes_saveables:
+		var _e := persist_including_saveables()
+	else:
+		var _e2 := persist()
+
+
+func _value_matches_registered_type(value: Variant, expected: int) -> bool:
+	if expected == TYPE_NIL:
+		return true
+	var t := typeof(value)
+	if t == expected:
+		return true
+	if expected == TYPE_FLOAT and t == TYPE_INT:
+		return true
+	if expected == TYPE_INT and t == TYPE_FLOAT:
+		return true
+	return false
+
+
+func _run_schema_migration_pipeline(inner: Dictionary, file_schema: int) -> void:
+	var to_schema := get_current_schema_version()
+	var from_schema := maxi(1, file_schema)
+	if from_schema >= to_schema:
+		return
+	for ver in range(from_schema, to_schema):
+		var idx := ver - 1
+		if idx < 0 or idx >= _schema_migrations.size():
+			if idx >= 0:
+				push_warning("SaveState: missing migration step for schema %d → %d (add entries to set_schema_migrations)" % [ver, ver + 1])
+			continue
+		var c: Variant = _schema_migrations[idx]
+		if c is Callable and (c as Callable).is_valid():
+			(c as Callable).call(inner)
+
+
+## v1.2: decode [param source_save_path] the same way runtime load does, then write prettified JSON to [param output_json_path] (UTF-8). Works with Pro encryption when running under Pro autoload.
+func export_save_file_to_json(source_save_path: String, output_json_path: String) -> Error:
+	if not FileAccess.file_exists(source_save_path):
+		return ERR_FILE_NOT_FOUND
+	var file := FileAccess.open(source_save_path, FileAccess.READ)
+	if file == null:
+		return FileAccess.get_open_error()
+	var raw := file.get_buffer(file.get_length())
+	file.close()
+	var processed := _post_read_transform(raw)
+	var pr := parse_save_file_buffer(processed)
+	if not pr.get("ok", false):
+		return int(pr.get("error", ERR_FILE_CORRUPT))
+	var inner: Dictionary = pr["data"] as Dictionary
+	var text: String = JSON.stringify(inner, "\t")
+	var out := FileAccess.open(output_json_path, FileAccess.WRITE)
+	if out == null:
+		return FileAccess.get_open_error()
+	out.store_string(text)
+	out.close()
+	return OK
+
+
+## v1.2: resolve [param slot_id] to disk path under [member save_root], then [method export_save_file_to_json].
+func export_slot_to_json(slot_id: StringName, output_json_path: String) -> Error:
+	var slot: SaveSlot = _slots.get(slot_id) as SaveSlot
+	if slot == null:
+		return ERR_DOES_NOT_EXIST
+	var path := slot.get_file_path(save_root, use_json)
+	return export_save_file_to_json(path, output_json_path)
 
 
 ## Writes the KV dictionary to the reserved [member KV_SLOT_ID] file (sync, atomic).
@@ -208,6 +446,32 @@ func restore_from_backup_file(main_save_path: String) -> Error:
 		if rm != OK:
 			return rm
 	return DirAccess.rename_absolute(bak_path, main_save_path)
+
+
+## Copies the file at [param main_save_path] to [code]main_save_path + ".bak"[/code], replacing any existing .bak. Does not change the main file. Use for slots created before rolling backups existed, or to snapshot before risky edits (Save Browser button).
+func create_backup_copy_for_file(main_save_path: String) -> Error:
+	if main_save_path.is_empty() or main_save_path.ends_with(".bak"):
+		return ERR_INVALID_PARAMETER
+	if not FileAccess.file_exists(main_save_path):
+		return ERR_FILE_NOT_FOUND
+	var bak_path := main_save_path + ".bak"
+	if FileAccess.file_exists(bak_path):
+		var rm_old := DirAccess.remove_absolute(ProjectSettings.globalize_path(bak_path))
+		if rm_old != OK:
+			return rm_old
+	var inf := FileAccess.open(main_save_path, FileAccess.READ)
+	if inf == null:
+		return FileAccess.get_open_error()
+	var n := int(inf.get_length())
+	var buf := inf.get_buffer(n)
+	inf.close()
+	var outf := FileAccess.open(bak_path, FileAccess.WRITE)
+	if outf == null:
+		return FileAccess.get_open_error()
+	outf.store_buffer(buf)
+	var werr := outf.get_error()
+	outf.close()
+	return OK if werr == OK else werr
 
 
 func _hydrate_kv_if_needed() -> void:
@@ -346,6 +610,8 @@ func parse_save_file_buffer(processed: PackedByteArray) -> Dictionary:
 
 	if schema < get_current_schema_version() and not _default_state.is_empty():
 		inner = SaveMigrator.deep_merge(inner, _default_state)
+
+	_run_schema_migration_pipeline(inner, schema)
 
 	return {"ok": true, "error": OK, "data": inner, "schema_version": schema}
 

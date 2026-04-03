@@ -28,6 +28,10 @@ func _on_migration_required(old_v: int, new_v: int) -> void:
 
 Emit happens **after** parse succeeds and **before** `load_completed` for that load path (same frame). Defaults from `set_default_state_for_migration` may already have been merged inside `parse_save_file_buffer`; your handler can still adjust KV or slot data and call `persist()` if you need to rewrite disk immediately.
 
+## Declarative pipeline (v1.2)
+
+After defaults merge, **`set_schema_migrations([...])`** runs ordered callables: index `0` upgrades schema **1→2**, index `1` upgrades **2→3**, etc. Use this for repeatable, versioned steps; keep **`migration_required`** for one-off hooks or logging.
+
 ## Bumping version
 
 1. Increase **`savestate/current_version`** in Project Settings.

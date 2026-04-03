@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="SaveState Starter Sample"
-config/description="Minimal scene: move, gold, Save/Load. See README in this folder."
+config/description="Minimal scene: move, gold, XP, position, color, stash dict — Save/Load. See README."
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
@@ -30,3 +30,9 @@ enabled=PackedStringArray("res://addons/savestate/plugin.cfg")
 [savestate]
 
 current_version=1
+
+[savestate_pro]
+
+encryption_enabled=false
+aes_key_hex=""
+hmac_key_hex=""

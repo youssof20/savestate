@@ -1,4 +1,35 @@
+# Godot (any project under this repo, including samples/minimal-demo)
 .godot/
+
+# SaveState Pro (paid) — NEVER add this path to git. Ship Pro only via itch / your own channel.
+# If you rename the folder, add the new path here too.
 addons/savestate_pro/
+
+# Minimal demo: copy addons from repo root for local runs; do not commit a second copy (Lite + optional Pro test drops).
+samples/minimal-demo/addons/savestate/
+samples/minimal-demo/addons/savestate_pro/
+
+# Local / throwaway (not part of the public Lite addon)
 .docs/
 testing/
+private/
+scratch/
+
+# OS & editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+
+# Local Lite zip from tools/publish_github_releases.ps1 or manual `git archive` at repo root (CI builds elsewhere).
+/savestate-lite-*.zip
+
+# Optional Python tooling
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Other IDEs (if the repo is opened there)
+.idea/
+.vs/

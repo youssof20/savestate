@@ -1,8 +1,14 @@
 extends CharacterBody2D
-## Demo stat persisted via SaveManager (see main.gd).
+## Demo player: movement + a saveable accent color (see main.gd for SaveManager keys).
 
 @export var gold: int = 0
+var accent: Color = Color(0.25, 0.55, 0.95)
 const SPEED: float = 220.0
+
+
+func set_accent(c: Color) -> void:
+	accent = c
+	queue_redraw()
 
 
 func _physics_process(_delta: float) -> void:
@@ -12,4 +18,4 @@ func _physics_process(_delta: float) -> void:
 
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2(-14, -14), Vector2(28, 28)), Color(0.25, 0.55, 0.95))
+	draw_rect(Rect2(Vector2(-14, -14), Vector2(28, 28)), accent)

@@ -1,24 +1,24 @@
-[gd_scene load_steps=4 format=3 uid="uid://savestate_minimal_main"]
+[gd_scene format=3 uid="uid://bqwk2qma0hv4a"]
 
-[ext_resource type="Script" path="res://main.gd" id="1_main"]
-[ext_resource type="Script" path="res://player.gd" id="2_player"]
+[ext_resource type="Script" uid="uid://t4kuu3cctere" path="res://main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://lr7jnnxg4oet" path="res://player.gd" id="2_player"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_player"]
 size = Vector2(28, 28)
 
-[node name="Main" type="Node2D"]
+[node name="Main" type="Node2D" unique_id=236034085]
 script = ExtResource("1_main")
 
-[node name="Player" type="CharacterBody2D" parent="."]
+[node name="Player" type="CharacterBody2D" parent="." unique_id=1316713978]
 position = Vector2(400, 300)
 script = ExtResource("2_player")
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Player"]
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Player" unique_id=1873115813]
 shape = SubResource("RectangleShape2D_player")
 
-[node name="CanvasLayer" type="CanvasLayer" parent="."]
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=696716462]
 
-[node name="UI" type="Control" parent="CanvasLayer"]
+[node name="UI" type="Control" parent="CanvasLayer" unique_id=730421918]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -26,7 +26,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="CanvasLayer/UI"]
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/UI" unique_id=1776236601]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -37,23 +37,70 @@ offset_right = -16.0
 offset_bottom = -16.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_constants/separation = 8
 
-[node name="GoldLabel" type="Label" parent="CanvasLayer/UI/VBox"]
+[node name="StatsLabel" type="Label" parent="CanvasLayer/UI/VBox" unique_id=1624189398]
 layout_mode = 2
-text = "Gold: 0"
+theme_override_font_sizes/font_size = 14
+text = "Stats"
+autowrap_mode = 3
 
-[node name="AddGoldBtn" type="Button" parent="CanvasLayer/UI/VBox"]
+[node name="AddGoldBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=1624692480]
 layout_mode = 2
 text = "+10 Gold"
 
-[node name="SaveBtn" type="Button" parent="CanvasLayer/UI/VBox"]
+[node name="AddXpBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=1726642161]
 layout_mode = 2
-text = "Save"
+text = "+5 XP"
 
-[node name="LoadBtn" type="Button" parent="CanvasLayer/UI/VBox"]
+[node name="HerbBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=1238597433]
 layout_mode = 2
-text = "Load"
+text = "+1 Herb (stash)"
+
+[node name="PotionBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=1269368758]
+layout_mode = 2
+text = "+1 Potion (stash)"
+
+[node name="CycleColorBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=1648120763]
+layout_mode = 2
+text = "Cycle player color"
+
+[node name="SaveBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=580999693]
+layout_mode = 2
+text = "Save (slot_0)"
+
+[node name="SlotRow" type="HBoxContainer" parent="CanvasLayer/UI/VBox" unique_id=2039974209]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SlotNameEdit" type="LineEdit" parent="CanvasLayer/UI/VBox/SlotRow" unique_id=2102199566]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "slot_2"
+
+[node name="NextFreeSlotBtn" type="Button" parent="CanvasLayer/UI/VBox/SlotRow" unique_id=910315183]
+layout_mode = 2
+text = "Next free"
+
+[node name="SaveNamedSlotBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=366612740]
+layout_mode = 2
+text = "Save copy to named slot (keeps slot_0)"
+
+[node name="LoadBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=1287097540]
+layout_mode = 2
+text = "Load (slot_0)"
+
+[node name="LoadNamedSlotBtn" type="Button" parent="CanvasLayer/UI/VBox" unique_id=1271609848]
+layout_mode = 2
+text = "Load from named slot"
 
 [connection signal="pressed" from="CanvasLayer/UI/VBox/AddGoldBtn" to="." method="_on_add_gold_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/AddXpBtn" to="." method="_on_add_xp_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/HerbBtn" to="." method="_on_add_herb_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/PotionBtn" to="." method="_on_add_potion_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/CycleColorBtn" to="." method="_on_cycle_color_pressed"]
 [connection signal="pressed" from="CanvasLayer/UI/VBox/SaveBtn" to="." method="_on_save_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/SlotRow/NextFreeSlotBtn" to="." method="_on_next_free_slot_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/SaveNamedSlotBtn" to="." method="_on_save_named_slot_pressed"]
 [connection signal="pressed" from="CanvasLayer/UI/VBox/LoadBtn" to="." method="_on_load_pressed"]
+[connection signal="pressed" from="CanvasLayer/UI/VBox/LoadNamedSlotBtn" to="." method="_on_load_named_slot_pressed"]

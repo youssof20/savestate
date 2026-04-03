@@ -4,6 +4,9 @@ extends Control
 
 const SAVE_GROUP := "savestate_saveable"
 const LOG_PREFIX := "[SaveState Pro | Save Browser]"
+const DATA_COL_KEY := 0
+const DATA_COL_SWATCH := 1
+const DATA_COL_VALUE := 2
 const SCRIPT_LITE := preload("res://addons/savestate/save_manager.gd")
 const SCRIPT_LITE_PATH := "res://addons/savestate/save_manager.gd"
 const SCRIPT_PRO_PATH := "res://addons/savestate_pro/pro_manager.gd"
@@ -49,13 +52,26 @@ var _data_live_sync: CheckBox
 var _data_apply_btn: Button
 var _data_discard_btn: Button
 var _data_pro_banner: Label
+var _data_color_popup: PopupPanel
+var _data_color_picker_widget: ColorPicker
+var _data_editor_hints: Dictionary = {}
+var _data_color_bound_key: String = ""
+var _data_color_changing: bool = false
 
 var _cfg_json: CheckBox
 var _cfg_backup: CheckBox
 var _cfg_enc: Label
 var _cfg_key_status: Label
 var _cfg_gen_keys: Button
+var _cfg_redetect_btn: Button
 var _cfg_pro_hint: Label
+var _explorer_preview_block: Control
+var _preview_toggle_btn: Button
+var _raw_preview_expanded: bool = false
+var _split_hex_json: HSplitContainer
+var _explorer_adv_row: HBoxContainer
+var _explorer_hsplit: HSplitContainer
+var _explorer_vsplit: VSplitContainer
 var _dbg_plugin: Object = null
 var _pro_enabled: bool = false
 
@@ -77,6 +93,7 @@ func _ready() -> void:
 
 	call_deferred("_on_refresh")
 	call_deferred("_sync_config_from_manager")
+	call_deferred("_dock_apply_explorer_layout_defaults")
 
 
 func set_debugger_plugin(p: Object) -> void:
@@ -120,45 +137,55 @@ func _build_explorer_tab() -> void:
 	root.add_child(_manager_status)
 
 	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 2)
 	root.add_child(bar)
-	var refresh := Button.new()
-	refresh.text = "Refresh"
-	refresh.pressed.connect(_on_refresh)
-	bar.add_child(refresh)
-	var restore_btn := Button.new()
-	restore_btn.text = "Restore from .bak"
-	restore_btn.tooltip_text = "Renames .bak over the main save (consumes .bak)."
-	restore_btn.pressed.connect(_on_restore_backup)
-	bar.add_child(restore_btn)
-	var del_btn := Button.new()
-	del_btn.text = "Delete selected"
-	del_btn.pressed.connect(_on_delete_selected)
-	bar.add_child(del_btn)
+	bar.add_child(_make_icon_tool_button("Reload", "Refresh — rescan save folder", _on_refresh, "↻"))
+	bar.add_child(
+		_make_icon_tool_button(
+			"Duplicate",
+			"Backup selected — copy main save to .bak (pick a row under Main saves)",
+			_on_backup_selected_now,
+			"Bak"
+		)
+	)
+	bar.add_child(
+		_make_icon_tool_button(
+			"History",
+			"Restore from .bak — replaces main file with backup (consumes .bak)",
+			_on_restore_backup,
+			"Rest"
+		)
+	)
+	bar.add_child(_make_icon_tool_button("Remove", "Delete selected file", _on_delete_selected, "Del"))
 	bar.add_spacer(false)
+	var rename_pair := HBoxContainer.new()
+	rename_pair.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rename_pair.alignment = BoxContainer.ALIGNMENT_CENTER
+	rename_pair.add_theme_constant_override("separation", 4)
 	_rename_input = LineEdit.new()
 	_rename_input.placeholder_text = "Rename slot…"
-	_rename_input.custom_minimum_size.x = 180
+	_rename_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rename_input.text_submitted.connect(func(_t: String) -> void:
 		_on_rename_pressed()
 	)
-	bar.add_child(_rename_input)
+	rename_pair.add_child(_rename_input)
 	_rename_btn = Button.new()
 	_rename_btn.text = "Rename"
-	_rename_btn.tooltip_text = "Renames the selected slot file. If a .bak and thumbnail exist, they are renamed too."
+	_rename_btn.custom_minimum_size.y = 28
+	_rename_btn.tooltip_text = "Renames the selected slot file (.bak / .jpg move with it when present)."
 	_rename_btn.pressed.connect(_on_rename_pressed)
-	bar.add_child(_rename_btn)
-	bar.add_spacer(false)
-	var open_folder := Button.new()
-	open_folder.text = "Open save folder"
-	open_folder.tooltip_text = "Opens the save directory in your OS file explorer."
-	open_folder.pressed.connect(_on_open_save_folder)
-	bar.add_child(open_folder)
+	rename_pair.add_child(_rename_btn)
+	_rename_input.custom_minimum_size.y = 28
+	bar.add_child(rename_pair)
+	bar.add_child(_make_icon_tool_button("FolderBrowse", "Open save folder in OS file manager", _on_open_save_folder, "Dir"))
 
 	var vsp := VSplitContainer.new()
+	_explorer_vsplit = vsp
 	vsp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(vsp)
 
 	var main := HSplitContainer.new()
+	_explorer_hsplit = main
 	main.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vsp.add_child(main)
 
@@ -212,16 +239,23 @@ func _build_explorer_tab() -> void:
 	main.add_child(right)
 
 	_thumb = TextureRect.new()
-	_thumb.custom_minimum_size = Vector2(320, 180)
+	_thumb.custom_minimum_size = Vector2(200, 112)
 	_thumb.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	_thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	right.add_child(_thumb)
 
+	var info_scroll := ScrollContainer.new()
+	info_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	info_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right.add_child(info_scroll)
+
 	var info := PanelContainer.new()
-	info.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right.add_child(info)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info_scroll.add_child(info)
 
 	var info_v := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.add_child(info_v)
 	var info_title := Label.new()
 	info_title.text = "Save info"
@@ -262,45 +296,68 @@ func _build_explorer_tab() -> void:
 	jump_data.tooltip_text = "Switches to Data tab for the selected save."
 	jump_data.pressed.connect(_on_open_selected_in_data)
 	actions.add_child(jump_data)
+	var export_json := Button.new()
+	export_json.text = "Export JSON"
+	export_json.tooltip_text = "Decodes the selected save (Pro: decrypts first) and writes a .json file next to it. SaveState Pro / itch.io."
+	export_json.pressed.connect(_on_export_json_explorer)
+	actions.add_child(export_json)
 
 	_info_counts = Label.new()
 	_info_counts.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_info_counts.text = ""
 	info_v.add_child(_info_counts)
 
-	var split := HSplitContainer.new()
-	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	split.custom_minimum_size = Vector2(0, 220)
-	vsp.add_child(split)
+	_explorer_preview_block = VBoxContainer.new()
+	_explorer_preview_block.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_explorer_preview_block.custom_minimum_size = Vector2(0, 120)
+	vsp.add_child(_explorer_preview_block)
+
+	_preview_toggle_btn = Button.new()
+	_preview_toggle_btn.flat = true
+	_preview_toggle_btn.focus_mode = Control.FOCUS_ACCESSIBILITY
+	_preview_toggle_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_preview_toggle_btn.tooltip_text = "Expand to show decoded JSON and optional hex. Collapse to give file lists and save info more vertical room."
+	_preview_toggle_btn.pressed.connect(_on_explorer_preview_toggle_pressed)
+	_explorer_preview_block.add_child(_preview_toggle_btn)
+
+	_split_hex_json = HSplitContainer.new()
+	_split_hex_json.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_split_hex_json.custom_minimum_size = Vector2(0, 140)
+	_explorer_preview_block.add_child(_split_hex_json)
 
 	_hex = TextEdit.new()
 	_hex.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hex.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_hex.editable = false
 	_hex.placeholder_text = "Hex (truncated)"
-	split.add_child(_hex)
+	_split_hex_json.add_child(_hex)
 
 	_json = TextEdit.new()
 	_json.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_json.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_json.editable = false
 	_json.placeholder_text = "Decoded JSON / status"
-	split.add_child(_json)
+	_split_hex_json.add_child(_json)
 
-	var adv_row := HBoxContainer.new()
-	root.add_child(adv_row)
+	_explorer_adv_row = HBoxContainer.new()
+	_explorer_preview_block.add_child(_explorer_adv_row)
 	_show_advanced = CheckBox.new()
-	_show_advanced.text = "Advanced (show hex)"
+	_show_advanced.text = "Advanced: show hex column"
 	_show_advanced.button_pressed = false
 	_show_advanced.toggled.connect(func(on: bool) -> void:
 		_hex.visible = on
 	)
-	adv_row.add_child(_show_advanced)
-	adv_row.add_spacer(false)
+	_explorer_adv_row.add_child(_show_advanced)
+	_explorer_adv_row.add_spacer(false)
 	var adv_hint := Label.new()
-	adv_hint.text = "Hex is for debugging file bytes."
+	adv_hint.text = "Hex is for debugging raw file bytes."
 	adv_hint.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
-	adv_row.add_child(adv_hint)
+	_explorer_adv_row.add_child(adv_hint)
 
 	_hex.visible = false
+	_raw_preview_expanded = false
+	_update_preview_toggle_label()
+	_apply_preview_expanded_state()
 
 	_toast = Label.new()
 	_toast.text = ""
@@ -407,6 +464,63 @@ func _try_get_editor_icon(name: String) -> Texture2D:
 	return null
 
 
+func _make_icon_tool_button(icon_name: String, tooltip: String, cb: Callable, fallback_short: String = "") -> Button:
+	var b := Button.new()
+	b.flat = true
+	b.focus_mode = Control.FOCUS_ACCESSIBILITY
+	var ico := _try_get_editor_icon(icon_name)
+	b.icon = ico
+	b.tooltip_text = tooltip
+	if ico == null:
+		b.text = fallback_short if not fallback_short.is_empty() else tooltip.get_slice(" ", 0)
+	b.pressed.connect(cb)
+	return b
+
+
+func _dock_apply_explorer_layout_defaults() -> void:
+	var w := maxi(size.x, 480)
+	var h := maxi(size.y, 320)
+	if _explorer_hsplit != null:
+		_explorer_hsplit.split_offset = clampi(int(w * 0.38), 220, 400)
+	if _explorer_vsplit != null:
+		_explorer_vsplit.split_offset = clampi(int(h * 0.52), 200, 520)
+
+
+func _update_preview_toggle_label() -> void:
+	if _preview_toggle_btn == null:
+		return
+	_preview_toggle_btn.text = (
+		"▼ Raw preview (JSON / hex)" if _raw_preview_expanded else "▶ Raw preview (JSON / hex)"
+	)
+
+
+func _apply_preview_expanded_state() -> void:
+	if _split_hex_json != null:
+		_split_hex_json.visible = _raw_preview_expanded
+	if _explorer_adv_row != null:
+		_explorer_adv_row.visible = _raw_preview_expanded
+	if _explorer_preview_block != null:
+		_explorer_preview_block.custom_minimum_size = (
+			Vector2(0, 120) if _raw_preview_expanded else Vector2(0, 36)
+		)
+
+
+func _on_explorer_preview_toggle_pressed() -> void:
+	_raw_preview_expanded = not _raw_preview_expanded
+	_update_preview_toggle_label()
+	_apply_preview_expanded_state()
+
+
+func _dock_swatch_texture(c: Color) -> Texture2D:
+	var n := 16
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	for y in range(n):
+		for x in range(n):
+			var border := x == 0 or y == 0 or x == n - 1 or y == n - 1
+			img.set_pixel(x, y, Color(0.12, 0.12, 0.14, 1.0) if border else c)
+	return ImageTexture.create_from_image(img)
+
+
 func _health_for_path(path: String) -> Dictionary:
 	var sm := _get_save_manager()
 	if sm == null:
@@ -473,8 +587,9 @@ func _build_data_tab() -> void:
 	panel.add_child(vb)
 
 	var title := Label.new()
-	title.text = "Edit inner save payload (decoded JSON). Nested keys flattened with dot paths. Double-click a file in Explorer to jump here."
+	title.text = "Flat key–value editor • double-click a save in Explorer to open here."
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title.modulate = Color(1, 1, 1, 0.78)
 	vb.add_child(title)
 
 	_data_pro_banner = Label.new()
@@ -485,20 +600,37 @@ func _build_data_tab() -> void:
 	vb.add_child(_data_pro_banner)
 
 	_data_status = Label.new()
+	_data_status.modulate = Color(1, 1, 1, 0.88)
 	_data_status.text = "Select a .bin / .json in Explorer first (or double-click it)."
 	vb.add_child(_data_status)
 
-	var row := HBoxContainer.new()
-	vb.add_child(row)
+	var action_row := HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 8)
+	vb.add_child(action_row)
+	var apply := Button.new()
+	_data_apply_btn = apply
+	apply.text = "Commit"
+	apply.custom_minimum_size.x = 96
+	apply.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	apply.tooltip_text = "Writes the current tree through SaveManager. Live Sync also patches a connected game when enabled."
+	apply.pressed.connect(_on_data_apply)
+	action_row.add_child(apply)
+	_data_discard_btn = Button.new()
+	_data_discard_btn.text = "Discard"
+	_data_discard_btn.custom_minimum_size.x = 88
+	_data_discard_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_data_discard_btn.disabled = true
+	_data_discard_btn.pressed.connect(_on_data_discard)
+	action_row.add_child(_data_discard_btn)
 	_data_pending_label = Label.new()
-	_data_pending_label.text = "Pending changes: 0"
-	row.add_child(_data_pending_label)
-	row.add_spacer(false)
+	_data_pending_label.text = "Pending: 0"
+	action_row.add_child(_data_pending_label)
+	action_row.add_spacer(false)
 	_data_live_sync = CheckBox.new()
 	_data_live_sync.text = "Live Sync"
-	_data_live_sync.tooltip_text = "Advanced: when enabled and a game is running with debugger connected, Commit will also patch the running game state."
+	_data_live_sync.tooltip_text = "When ON and a game is running with the debugger, Commit also patches KV in the running session."
 	_data_live_sync.toggled.connect(_on_live_sync_toggled)
-	row.add_child(_data_live_sync)
+	action_row.add_child(_data_live_sync)
 
 	_data_search = LineEdit.new()
 	_data_search.placeholder_text = "Search keys…"
@@ -507,29 +639,29 @@ func _build_data_tab() -> void:
 
 	_data_tree = Tree.new()
 	_data_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_data_tree.custom_minimum_size = Vector2(0, 200)
-	_data_tree.columns = 2
+	_data_tree.custom_minimum_size = Vector2(0, 240)
+	_data_tree.columns = 3
 	_data_tree.column_titles_visible = true
 	_data_tree.set_column_title(0, "Key")
-	_data_tree.set_column_title(1, "Value")
+	_data_tree.set_column_title(1, " ")
+	_data_tree.set_column_title(2, "Value")
 	_data_tree.set_column_expand(0, true)
-	_data_tree.set_column_expand(1, true)
+	_data_tree.set_column_expand(1, false)
+	_data_tree.set_column_expand(2, true)
+	_data_tree.set_column_custom_minimum_width(1, 28)
 	_data_tree.hide_root = true
 	_data_tree.item_edited.connect(_on_data_tree_edited)
+	_data_tree.gui_input.connect(_on_data_tree_gui_input)
 	vb.add_child(_data_tree)
 
-	var apply := Button.new()
-	_data_apply_btn = apply
-	apply.text = "Commit changes"
-	apply.tooltip_text = "Writes the current tree back through SaveManager. If Live Sync is ON and a game is connected, also applies the patch at runtime."
-	apply.pressed.connect(_on_data_apply)
-	vb.add_child(apply)
-
-	_data_discard_btn = Button.new()
-	_data_discard_btn.text = "Discard changes"
-	_data_discard_btn.disabled = true
-	_data_discard_btn.pressed.connect(_on_data_discard)
-	vb.add_child(_data_discard_btn)
+	_data_color_popup = PopupPanel.new()
+	_data_color_popup.name = "DataColorPopup"
+	_data_color_popup.exclusive = true
+	_data_color_picker_widget = ColorPicker.new()
+	_data_color_picker_widget.edit_alpha = true
+	_data_color_picker_widget.color_changed.connect(_on_data_color_picker_changed)
+	_data_color_popup.add_child(_data_color_picker_widget)
+	add_child(_data_color_popup)
 
 
 func _build_config_tab() -> void:
@@ -537,12 +669,19 @@ func _build_config_tab() -> void:
 	panel.name = "Config"
 	_tabs.add_child(panel)
 	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
 	panel.add_child(vb)
 
 	var l := Label.new()
-	l.text = "These settings mirror the SaveManager autoload. They apply when you run the game and when this dock reads or writes saves in the editor."
+	l.text = "Mirrors the SaveManager autoload for the editor mirror and when you run the game."
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.modulate = Color(1, 1, 1, 0.78)
 	vb.add_child(l)
+
+	var sec_files := Label.new()
+	sec_files.text = "File & backups"
+	sec_files.add_theme_color_override("font_color", Color(0.9, 0.9, 0.92))
+	vb.add_child(sec_files)
 
 	_cfg_json = CheckBox.new()
 	_cfg_json.text = "Use human-readable JSON files (.json) instead of compact binary (.bin)"
@@ -556,34 +695,62 @@ func _build_config_tab() -> void:
 	_cfg_backup.toggled.connect(_on_cfg_backup_toggled)
 	vb.add_child(_cfg_backup)
 
+	var sep0 := HSeparator.new()
+	vb.add_child(sep0)
+
+	var sec_enc := Label.new()
+	sec_enc.text = "Security (Pro)"
+	sec_enc.add_theme_color_override("font_color", Color(0.9, 0.9, 0.92))
+	vb.add_child(sec_enc)
+
+	var sec_margin := MarginContainer.new()
+	sec_margin.add_theme_constant_override("margin_left", 8)
+	sec_margin.add_theme_constant_override("margin_right", 8)
+	sec_margin.add_theme_constant_override("margin_top", 4)
+	sec_margin.add_theme_constant_override("margin_bottom", 4)
+	vb.add_child(sec_margin)
+
+	var sec_panel := PanelContainer.new()
+	sec_margin.add_child(sec_panel)
+
+	var sec_v := VBoxContainer.new()
+	sec_v.add_theme_constant_override("separation", 8)
+	sec_panel.add_child(sec_v)
+
 	_cfg_enc = Label.new()
 	_cfg_enc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_cfg_enc.text = "Encryption (Pro): AES-256 wraps file bytes; HMAC proves the file was not edited outside your game. Use when you want to discourage casual tampering — not a substitute for server authority. Generate keys once per project and ship them only in trusted builds."
-	vb.add_child(_cfg_enc)
+	_cfg_enc.modulate = Color(1, 1, 1, 0.78)
+	_cfg_enc.text = "AES-256 wraps file bytes; HMAC detects tampering. Not a substitute for server authority. Generate keys once per project."
+	sec_v.add_child(_cfg_enc)
 
 	_cfg_gen_keys = Button.new()
 	_cfg_gen_keys.text = "Generate keys (AES + HMAC)"
+	_cfg_gen_keys.custom_minimum_size.y = 32
 	_cfg_gen_keys.tooltip_text = "Creates random keys and stores them in Project Settings (savestate_pro/aes_key_hex and savestate_pro/hmac_key_hex), then turns encryption on. Anyone with your project or exported pck can extract keys — this deters casual edits, not determined reverse engineers."
 	_cfg_gen_keys.pressed.connect(_on_generate_keys_pressed)
-	vb.add_child(_cfg_gen_keys)
+	sec_v.add_child(_cfg_gen_keys)
 
 	_cfg_key_status = Label.new()
 	_cfg_key_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_cfg_key_status.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
 	_cfg_key_status.text = ""
-	vb.add_child(_cfg_key_status)
+	sec_v.add_child(_cfg_key_status)
+
+	var sep1 := HSeparator.new()
+	vb.add_child(sep1)
 
 	_cfg_pro_hint = Label.new()
 	_cfg_pro_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_cfg_pro_hint.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
+	_cfg_pro_hint.modulate = Color(1, 1, 1, 0.78)
 	_cfg_pro_hint.text = ""
 	vb.add_child(_cfg_pro_hint)
 
-	var btn := Button.new()
-	btn.text = "Re-detect SaveManager (Lite / Pro)"
-	btn.tooltip_text = "If you toggle the Pro plugin on/off while the editor is open, click this to refresh which script the dock is mirroring."
-	btn.pressed.connect(_on_redetect_manager_pressed)
-	vb.add_child(btn)
+	_cfg_redetect_btn = Button.new()
+	_cfg_redetect_btn.text = "Re-detect SaveManager"
+	_cfg_redetect_btn.custom_minimum_size.y = 30
+	_cfg_redetect_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_cfg_redetect_btn.tooltip_text = "If you toggle the Pro plugin on/off while the editor is open, refresh which script the dock mirrors."
+	_cfg_redetect_btn.pressed.connect(_on_redetect_manager_pressed)
+	vb.add_child(_cfg_redetect_btn)
 
 
 func _on_redetect_manager_pressed() -> void:
@@ -616,10 +783,7 @@ func _sync_config_from_manager() -> void:
 	_cfg_backup.disabled = false
 	if _data_pro_banner != null:
 		_data_pro_banner.visible = not _pro_enabled
-	if _data_apply_btn != null:
-		_data_apply_btn.disabled = not _pro_enabled
-	if _data_discard_btn != null:
-		_data_discard_btn.disabled = not _pro_enabled
+	_update_pending_ui()
 	if _data_live_sync != null:
 		_data_live_sync.disabled = (not _pro_enabled) or (_dbg_plugin == null)
 	if _cfg_gen_keys != null:
@@ -637,11 +801,21 @@ func _sync_config_from_manager() -> void:
 func _update_key_status() -> void:
 	if _cfg_key_status == null:
 		return
+	_cfg_key_status.remove_theme_color_override("font_color")
+	if not _pro_enabled:
+		_cfg_key_status.text = "Encryption keys: N/A (Lite — enable SaveState Pro to use AES/HMAC)"
+		_cfg_key_status.add_theme_color_override("font_color", Color(0.65, 0.65, 0.68))
+		return
 	var aes_hex := str(ProjectSettings.get_setting("savestate_pro/aes_key_hex", ""))
 	var hmac_hex := str(ProjectSettings.get_setting("savestate_pro/hmac_key_hex", ""))
 	var has_aes := aes_hex.length() >= 64
 	var has_hmac := hmac_hex.length() >= 64
-	_cfg_key_status.text = "Keys: %s" % ("Installed" if (has_aes and has_hmac) else "Missing (click Generate keys)")
+	if has_aes and has_hmac:
+		_cfg_key_status.text = "Keys: installed (AES + HMAC)"
+		_cfg_key_status.add_theme_color_override("font_color", Color(0.55, 0.82, 0.55))
+	else:
+		_cfg_key_status.text = "Keys: missing — generate keys before shipping encrypted saves"
+		_cfg_key_status.add_theme_color_override("font_color", Color(1.0, 0.78, 0.35))
 
 
 func _on_generate_keys_pressed() -> void:
@@ -684,6 +858,7 @@ func _get_save_root() -> String:
 
 
 func _on_refresh() -> void:
+	var resume_path := _data_path
 	_list_main.clear()
 	_list_backup.clear()
 	_main_paths.clear()
@@ -739,14 +914,35 @@ func _on_refresh() -> void:
 		_json.text = "No save files. Run the game and call SaveManager.persist() or persist_async()."
 		return
 
-	# Auto-select first main save to populate the info panel.
-	if mains.size() > 0:
+	# Re-select the file we were editing (e.g. after Data commit) so we don't jump to another list entry.
+	var pick_main := -1
+	for i in range(mains.size()):
+		if mains[i] == resume_path:
+			pick_main = i
+			break
+	var pick_bak := -1
+	for j in range(baks.size()):
+		if baks[j] == resume_path:
+			pick_bak = j
+			break
+	if pick_main >= 0:
+		_list_backup.deselect_all()
+		_list_main.select(pick_main)
+		_on_explorer_main_selected(pick_main)
+	elif pick_bak >= 0:
+		_list_main.deselect_all()
+		_list_backup.select(pick_bak)
+		_on_explorer_backup_selected(pick_bak)
+	elif mains.size() > 0:
 		_list_backup.deselect_all()
 		_list_main.select(0)
 		_on_explorer_main_selected(0)
 
 
 func _is_listed_save_file(fn: String) -> bool:
+	# Sidecar JSON for Save Browser color hints — not a SaveState slot payload.
+	if fn == ".savestate_editor_hints.json":
+		return false
 	if fn.ends_with(".bin.bak") or fn.ends_with(".json.bak"):
 		return true
 	if fn.ends_with(".tmp"):
@@ -856,7 +1052,8 @@ func _update_info_panel_for_path(path: String) -> void:
 	var st := _health_for_path(path)
 	_info_size.text = _fmt_bytes(int(st.get("raw_size", 0)))
 	var mt := int(st.get("modified_unix", 0))
-	_info_modified.text = "%s (%s)" % [_format_time_ago(mt), (Time.get_datetime_string_from_unix_time(mt, true) if mt > 0 else "-")]
+	var abs_label := SaveStateUnixDisplay.format_modified_time(mt)
+	_info_modified.text = "%s (%s)" % [_format_time_ago(mt), abs_label if not abs_label.is_empty() else "-"]
 	var sc := int(st.get("schema_version", 0))
 	var cur := int(st.get("current_schema_version", 0))
 	var mig := bool(st.get("needs_migration", false))
@@ -898,6 +1095,28 @@ func _on_reveal_selected_file() -> void:
 	OS.shell_open(abs)
 
 
+func _on_export_json_explorer() -> void:
+	var path := _get_selected_save_path()
+	if path.is_empty():
+		_toast_show("Select a save file in the list first.", "warn")
+		return
+	var sm := _get_save_manager()
+	if sm == null:
+		_toast_show("SaveManager not available.", "warn")
+		return
+	var out_path := path.get_base_dir().path_join(path.get_file().get_basename() + "_savestate_export.json")
+	var err: int = sm.export_save_file_to_json(path, out_path)
+	if err != OK:
+		_toast_show("Export failed: %s" % error_string(err), "warn")
+		_log("export json failed: %s" % error_string(err))
+		return
+	_log("exported JSON: %s" % out_path)
+	_toast_show("Wrote %s" % out_path.get_file(), "ok")
+	var abs_dir := ProjectSettings.globalize_path(out_path.get_base_dir())
+	if DirAccess.dir_exists_absolute(abs_dir):
+		OS.shell_open(abs_dir)
+
+
 func _on_open_selected_in_data() -> void:
 	var path := _get_selected_save_path()
 	if path.is_empty():
@@ -925,8 +1144,10 @@ func _populate_data_tab(info: Dictionary) -> void:
 			inner = parsed
 	_data_flat = _flatten_for_editor(inner)
 	_data_original_flat = _data_flat.duplicate(true)
+	_reload_data_editor_hints()
 	_data_status.text = "Editing: %s (%d keys)" % [_data_path.get_file(), _data_flat.size()]
 	_refill_data_tree()
+	call_deferred("_refresh_data_color_picker_from_selection")
 
 
 func _flatten_for_editor(d: Dictionary, prefix: String = "") -> Dictionary:
@@ -946,6 +1167,19 @@ func _flatten_for_editor(d: Dictionary, prefix: String = "") -> Dictionary:
 	return out
 
 
+func _data_set_row_value_visual(it: TreeItem, key: String, v: Variant) -> void:
+	var val_str := _value_to_edit_string(v)
+	it.set_text(DATA_COL_VALUE, val_str)
+	it.clear_custom_bg_color(DATA_COL_VALUE)
+	it.set_icon(DATA_COL_SWATCH, null)
+	it.set_tooltip_text(DATA_COL_SWATCH, "")
+	if _data_row_should_show_color_ui(key, v) and _dock_is_color_like(v):
+		var cc := _dock_variant_to_color(v)
+		it.set_icon(DATA_COL_SWATCH, _dock_swatch_texture(cc))
+		it.set_custom_bg_color(DATA_COL_VALUE, Color(cc.r, cc.g, cc.b, 0.22))
+		it.set_tooltip_text(DATA_COL_SWATCH, "Click to edit color (Pro)")
+
+
 func _refill_data_tree() -> void:
 	_data_tree.clear()
 	var root := _data_tree.create_item()
@@ -957,10 +1191,12 @@ func _refill_data_tree() -> void:
 		if not q.is_empty() and not str(k).to_lower().contains(q):
 			continue
 		var it := _data_tree.create_item(root)
-		it.set_text(0, str(k))
-		it.set_text(1, _value_to_edit_string(_data_flat[k]))
-		it.set_editable(0, false)
-		it.set_editable(1, allow_edit)
+		var ks := str(k)
+		it.set_text(DATA_COL_KEY, ks)
+		_data_set_row_value_visual(it, ks, _data_flat[k])
+		it.set_editable(DATA_COL_KEY, false)
+		it.set_editable(DATA_COL_SWATCH, false)
+		it.set_editable(DATA_COL_VALUE, allow_edit)
 
 
 func _value_to_edit_string(v: Variant) -> String:
@@ -978,34 +1214,208 @@ func _on_data_tree_edited() -> void:
 	var it := _data_tree.get_edited()
 	if it == null:
 		return
-	if _data_tree.get_edited_column() != 1:
+	if _data_tree.get_edited_column() != DATA_COL_VALUE:
 		return
 	if not _pro_enabled:
 		_toast_show("Editing is a Pro feature (Lite is read-only).", "warn")
-		var k0 := str(it.get_text(0))
+		var k0 := str(it.get_text(DATA_COL_KEY))
 		if _data_flat.has(k0):
-			it.set_text(1, _value_to_edit_string(_data_flat[k0]))
+			_data_set_row_value_visual(it, k0, _data_flat[k0])
 		return
-	var k := str(it.get_text(0))
-	var vstr := str(it.get_text(1))
+	var k := str(it.get_text(DATA_COL_KEY))
+	var vstr := str(it.get_text(DATA_COL_VALUE))
 	var v := _parse_value_string(vstr)
 	_data_flat[k] = v
 	var had_orig := _data_original_flat.has(k)
 	var orig := _data_original_flat.get(k, null)
-	if (not had_orig and v != null) or (had_orig and orig != v):
+	if (not had_orig and v != null) or (had_orig and _variant_neq(orig, v)):
 		_data_pending[k] = v
 	else:
 		_data_pending.erase(k)
 	_update_pending_ui()
+	call_deferred("_refresh_data_color_picker_from_selection")
+
+
+func _reload_data_editor_hints() -> void:
+	_data_editor_hints.clear()
+	var sm := _get_save_manager()
+	if sm != null and sm.has_method("get_editor_hints_copy"):
+		_data_editor_hints = sm.get_editor_hints_copy()
+	else:
+		_try_load_hints_from_save_root(_get_save_root())
+
+
+func _try_load_hints_from_save_root(root: String) -> void:
+	if root.is_empty():
+		return
+	var p := root.path_join(".savestate_editor_hints.json")
+	if not FileAccess.file_exists(p):
+		return
+	var txt := FileAccess.get_file_as_string(p)
+	var j: Variant = JSON.parse_string(txt)
+	if typeof(j) != TYPE_DICTIONARY:
+		return
+	for k in j:
+		_data_editor_hints[str(k)] = int(j[k])
+
+
+func _on_data_tree_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			var pos := _data_tree.get_local_mouse_position()
+			var item := _data_tree.get_item_at_position(pos)
+			if item != null:
+				var col := _data_tree.get_column_at_position(pos)
+				if col == DATA_COL_SWATCH:
+					_open_color_picker_from_swatch(item)
+			call_deferred("_refresh_data_color_picker_from_selection")
+
+
+func _data_row_should_show_color_ui(key: String, v: Variant) -> bool:
+	if _data_editor_hints.has(key):
+		var h := int(_data_editor_hints[key])
+		if h == 1:
+			return _dock_is_color_like(v)
+		return false
+	return _dock_is_color_like(v)
+
+
+func _refresh_data_color_picker_from_selection() -> void:
+	if _data_color_popup == null:
+		return
+	var it := _data_tree.get_selected()
+	if it == null:
+		_data_color_bound_key = ""
+		return
+	var k := str(it.get_text(DATA_COL_KEY))
+	var v: Variant = _data_flat.get(k, null)
+	if not _data_row_should_show_color_ui(k, v) or not _dock_is_color_like(v):
+		_data_color_bound_key = ""
+		return
+	_data_color_bound_key = k
+
+
+func _open_color_picker_from_swatch(item: TreeItem) -> void:
+	var k := str(item.get_text(DATA_COL_KEY))
+	var v: Variant = _data_flat.get(k, null)
+	if not _data_row_should_show_color_ui(k, v) or not _dock_is_color_like(v):
+		return
+	if not _pro_enabled:
+		_toast_show("Editing is a Pro feature (Lite is read-only).", "warn")
+		return
+	_data_color_bound_key = k
+	var col := _dock_variant_to_color(v)
+	_data_color_changing = true
+	if _data_color_picker_widget != null:
+		_data_color_picker_widget.color = col
+	_data_color_changing = false
+	if _data_color_popup != null:
+		_data_color_popup.popup_centered(Vector2(380, 460))
+
+
+func _on_data_color_picker_changed(new_color: Color) -> void:
+	if _data_color_changing or _data_color_bound_key.is_empty():
+		return
+	if not _pro_enabled:
+		return
+	var k := _data_color_bound_key
+	var prev: Variant = _data_flat.get(k, Color.WHITE)
+	var nv: Variant = _dock_color_to_storage(new_color, prev)
+	_data_flat[k] = nv
+	var had_orig := _data_original_flat.has(k)
+	var orig := _data_original_flat.get(k, null)
+	if (not had_orig and nv != null) or (had_orig and _variant_neq(orig, nv)):
+		_data_pending[k] = nv
+	else:
+		_data_pending.erase(k)
+	_update_pending_ui()
+	var it := _data_tree.get_selected()
+	if it != null and str(it.get_text(DATA_COL_KEY)) == k:
+		_data_set_row_value_visual(it, k, nv)
+
+
+func _dock_try_parse_paren_color_string(s: String) -> Variant:
+	var t := s.strip_edges()
+	if not (t.begins_with("(") and t.ends_with(")")):
+		return null
+	var inner := t.substr(1, t.length() - 2).strip_edges()
+	var parts := inner.split(",")
+	if parts.size() < 3:
+		return null
+	var r := float(str(parts[0]).strip_edges())
+	var g := float(str(parts[1]).strip_edges())
+	var b := float(str(parts[2]).strip_edges())
+	var a := float(str(parts[3]).strip_edges()) if parts.size() > 3 else 1.0
+	if is_nan(r) or is_nan(g) or is_nan(b) or is_nan(a):
+		return null
+	return Color(r, g, b, a)
+
+
+func _dock_is_color_like(v: Variant) -> bool:
+	var t := typeof(v)
+	if t == TYPE_COLOR:
+		return true
+	if t == TYPE_STRING:
+		return _dock_try_parse_paren_color_string(str(v)) != null
+	if v is Dictionary:
+		var d: Dictionary = v
+		return d.has("r") and d.has("g") and d.has("b")
+	if v is Array:
+		return (v as Array).size() >= 3 and (v as Array).size() <= 4
+	return false
+
+
+func _dock_variant_to_color(v: Variant) -> Color:
+	if typeof(v) == TYPE_COLOR:
+		return v
+	if typeof(v) == TYPE_STRING:
+		var pc: Variant = _dock_try_parse_paren_color_string(str(v))
+		return pc if pc is Color else Color.WHITE
+	if v is Dictionary:
+		var d: Dictionary = v
+		var r := float(d.get("r", d.get("red", 0.0)))
+		var g := float(d.get("g", d.get("green", 0.0)))
+		var b := float(d.get("b", d.get("blue", 0.0)))
+		var a := float(d.get("a", d.get("alpha", 1.0)))
+		if r > 1.0 or g > 1.0 or b > 1.0:
+			r /= 255.0
+			g /= 255.0
+			b /= 255.0
+			if a > 1.0:
+				a /= 255.0
+		return Color(r, g, b, a)
+	if v is Array:
+		var arr: Array = v
+		if arr.size() >= 3:
+			return Color(
+				float(arr[0]),
+				float(arr[1]),
+				float(arr[2]),
+				float(arr[3]) if arr.size() > 3 else 1.0
+			)
+	return Color.WHITE
+
+
+func _dock_color_to_storage(c: Color, previous: Variant) -> Variant:
+	if typeof(previous) == TYPE_COLOR:
+		return c
+	if typeof(previous) == TYPE_STRING:
+		return str(c)
+	if previous is Dictionary:
+		return {"r": c.r, "g": c.g, "b": c.b, "a": c.a}
+	if previous is Array:
+		return [c.r, c.g, c.b, c.a]
+	return c
 
 
 func _update_pending_ui() -> void:
 	if _data_pending_label != null:
-		_data_pending_label.text = "Pending changes: %d" % _data_pending.size()
+		_data_pending_label.text = "Pending: %d" % _data_pending.size()
 	if _data_discard_btn != null:
-		_data_discard_btn.disabled = _data_pending.is_empty()
+		_data_discard_btn.disabled = _data_pending.is_empty() or not _pro_enabled
 	if _data_apply_btn != null:
-		_data_apply_btn.disabled = _data_pending.is_empty()
+		_data_apply_btn.disabled = _data_pending.is_empty() or not _pro_enabled
 
 
 func _on_data_discard() -> void:
@@ -1043,6 +1453,13 @@ func _parse_value_string(s: String) -> Variant:
 	if j != null:
 		return j
 	return t
+
+
+## Avoid `orig != v` when types differ (e.g. [Color] vs [String] from the tree) — Godot errors on mixed-type inequality.
+func _variant_neq(a: Variant, b: Variant) -> bool:
+	if typeof(a) != typeof(b):
+		return true
+	return a != b
 
 
 func _on_data_apply() -> void:
@@ -1124,6 +1541,28 @@ func _on_restore_backup() -> void:
 		return
 	_json.text = "Restored from .bak."
 	_toast_show("Restored from .bak", "ok")
+	_on_refresh()
+
+
+func _on_backup_selected_now() -> void:
+	var path := _get_selected_save_path()
+	if path.is_empty():
+		_toast_show("Select a main save first.", "warn")
+		return
+	if path.ends_with(".bak"):
+		_toast_show("Use a row under Main saves — not a .bak file.", "warn")
+		return
+	var sm := _get_save_manager()
+	if sm == null:
+		_toast_show("SaveManager not available.", "warn")
+		return
+	var err: Error = sm.create_backup_copy_for_file(path) as Error
+	if err != OK:
+		_toast_show("Backup failed: %s" % error_string(err), "err")
+		_log("backup selected failed: %s path=%s" % [error_string(err), path])
+		return
+	_log("backup selected OK path=%s" % path)
+	_toast_show("Wrote %s.bak" % path.get_file(), "ok")
 	_on_refresh()
 
 

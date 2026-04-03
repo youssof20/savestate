@@ -1,0 +1,36 @@
+[gd_scene load_steps=2 format=3 uid="uid://savestate_tpl_menu"]
+
+[ext_resource type="Script" path="res://addons/savestate/templates/save_menu_lite.gd" id="1_script"]
+
+[node name="SaveMenuLite" type="CanvasLayer"]
+layer = 50
+script = ExtResource("1_script")
+
+[node name="Center" type="CenterContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Center"]
+offset_left = -120.0
+offset_top = -80.0
+offset_right = 120.0
+offset_bottom = 80.0
+
+[node name="VBox" type="VBoxContainer" parent="Center/Panel"]
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="Center/Panel/VBox"]
+text = "Save (template)"
+horizontal_alignment = 1
+
+[node name="SaveBtn" type="Button" parent="Center/Panel/VBox"]
+text = "Quick save (slot_0)"
+
+[node name="LoadBtn" type="Button" parent="Center/Panel/VBox"]
+text = "Quick load (slot_0)"
+
+[connection signal="pressed" from="Center/Panel/VBox/SaveBtn" to="." method="_on_quick_save_pressed"]
+[connection signal="pressed" from="Center/Panel/VBox/LoadBtn" to="." method="_on_quick_load_pressed"]

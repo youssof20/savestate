@@ -147,6 +147,18 @@ Replaces the main file with its `.bak` sibling if present.
 SaveManager.restore_from_backup_file("user://savestate/slot_0.bin")
 ```
 
+## create_backup_copy_for_file
+
+```gdscript
+func create_backup_copy_for_file(main_save_path: String) -> Error
+```
+
+Copies the main save bytes to `main_save_path + ".bak"` (replaces an existing `.bak`). Does not modify the main file. Used by the Save Browser **Backup selected** button and for slots that have no rolling backup yet.
+
+```gdscript
+SaveManager.create_backup_copy_for_file("user://savestate/slot_2.bin")
+```
+
 ## register_slot
 
 ```gdscript
@@ -265,6 +277,91 @@ Returns a summary dict (size, schema, encryption hints when Pro keys exist) for 
 
 ```gdscript
 var h := SaveManager.debug_health_for_path(path)
+```
+
+## register_key (v1.2)
+
+```gdscript
+func register_key(
+    key: StringName,
+    expected_type: int,
+    default_value: Variant = null,
+    editor_value_hint: int = SaveManager.KV_EDITOR_HINT_AUTO
+) -> void
+```
+
+Locks a KV key to a `typeof` value. `set_value` rejects mismatched types (int/float relaxed). Missing keys fall back to `default_value` in `get_value`. With `TYPE_COLOR` and `KV_EDITOR_HINT_AUTO`, the Save Browser Data tab shows a color picker; use `KV_EDITOR_HINT_NONE` to hide it for ambiguous nested values.
+
+```gdscript
+SaveManager.register_key(&"gold", TYPE_INT, 0)
+SaveManager.register_key(&"tint", TYPE_COLOR, Color.WHITE)
+```
+
+## unregister_key (v1.2)
+
+```gdscript
+func unregister_key(key: StringName) -> void
+```
+
+## set_schema_migrations (v1.2)
+
+```gdscript
+func set_schema_migrations(migrations: Array) -> void
+```
+
+Ordered callables. Entry at index `0` runs when upgrading a file from schema **1 → 2**, index `1` for **2 → 3**, etc. Each callable receives the inner `Dictionary` (mutate in place).
+
+```gdscript
+SaveManager.set_schema_migrations([
+    func(d): d["mana"] = d.get("mana", 100),
+    func(d): d.erase("legacy_key"),
+])
+```
+
+## mark_dirty (v1.2)
+
+```gdscript
+func mark_dirty() -> void
+```
+
+Debounced persist after `auto_save_debounce_sec` seconds of quiet. Pro autoload uses async persist.
+
+## SaveStateUnixDisplay (v1.2)
+
+Global class `addons/savestate/unix_display.gd`. Formats Unix seconds (e.g. from `FileAccess.get_modified_time`) for labels. Wraps `Time.get_datetime_string_from_unix_time`; the optional `use_space_separator` argument is the engine’s **use_space** flag (date/time separator), not a UTC toggle.
+
+```gdscript
+var label := SaveStateUnixDisplay.format_modified_time(int(FileAccess.get_modified_time(path)))
+if label.is_empty():
+    label = "—"
+```
+
+## register_editor_hint (v1.2)
+
+```gdscript
+func register_editor_hint(flat_path: String, hint: int) -> void
+```
+
+Flat dot-path (same as Save Browser Data tab) → `SaveManager.KV_EDITOR_HINT_COLOR` (`1`) so the dock shows a color picker. Persisted under `save_root/.savestate_editor_hints.json`.
+
+## get_editor_hints_copy (v1.2)
+
+```gdscript
+func get_editor_hints_copy() -> Dictionary
+```
+
+## export_current_to_slot / import_slot_into_runtime (v1.2)
+
+```gdscript
+func export_current_to_slot(slot_id: StringName) -> Error
+func import_slot_into_runtime(slot_id: StringName) -> Error
+```
+
+## export_save_file_to_json / export_slot_to_json (v1.2)
+
+```gdscript
+func export_save_file_to_json(source_save_path: String, output_json_path: String) -> Error
+func export_slot_to_json(slot_id: StringName, output_json_path: String) -> Error
 ```
 
 ## Signals
