@@ -11,6 +11,8 @@ const SCRIPT_LITE := preload("res://addons/savestate/save_manager.gd")
 const SCRIPT_LITE_PATH := "res://addons/savestate/save_manager.gd"
 const SCRIPT_PRO_PATH := "res://addons/savestate_pro/pro_manager.gd"
 
+var _catalogue: Control
+var _view_selector: OptionButton
 var _tabs: TabContainer
 var _list_main: ItemList
 var _list_backup: ItemList
@@ -41,6 +43,9 @@ var _toast: Label
 var _cached_tool_manager: SaveManagerBase = null
 
 var _data_path: String = ""
+var _edit_document := SaveStateEditDocument.new()
+var _data_source_hash: String = ""
+var _live_request_pending: bool = false
 var _data_flat: Dictionary = {}
 var _data_original_flat: Dictionary = {}
 var _data_pending: Dictionary = {}
@@ -77,19 +82,31 @@ var _pro_enabled: bool = false
 
 
 func _ready() -> void:
-	set_name("SaveStateSaveBrowser")
+	set_name("SaveState")
 	add_to_group("savestate_save_browser")
 	var v := VBoxContainer.new()
 	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
 
+	_view_selector = OptionButton.new()
+	for label in ["Saved games", "Legacy files", "Legacy data", "Settings"]: _view_selector.add_item(label)
+	v.add_child(_view_selector)
 	_tabs = TabContainer.new()
+	_tabs.tabs_visible = false
+	_tabs.use_hidden_tabs_for_min_size = false
+	_view_selector.item_selected.connect(func(index): _tabs.current_tab = index)
 	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(_tabs)
 
 	_build_explorer_tab()
 	_build_data_tab()
 	_build_config_tab()
+	var catalogue := preload("res://addons/savestate/editor/session_catalogue_view.gd").new()
+	catalogue.get_manager = _get_save_manager
+	_tabs.add_child(catalogue)
+	_catalogue = catalogue
+	_tabs.move_child(catalogue, 0)
+	_tabs.current_tab = 0
 
 	call_deferred("_on_refresh")
 	call_deferred("_sync_config_from_manager")
@@ -97,11 +114,16 @@ func _ready() -> void:
 
 
 func set_debugger_plugin(p: Object) -> void:
+	if _dbg_plugin != null and _dbg_plugin.has_signal("patch_finished") and _dbg_plugin.is_connected("patch_finished", _on_live_patch_finished):
+		_dbg_plugin.disconnect("patch_finished", _on_live_patch_finished)
 	_dbg_plugin = p
+	if _catalogue != null: _catalogue.debugger = p
+	if p != null and p.has_signal("patch_finished"):
+		p.connect("patch_finished", _on_live_patch_finished)
 
 
 func _log(msg: String) -> void:
-	print("%s %s" % [LOG_PREFIX, msg])
+	if OS.is_stdout_verbose(): print("%s %s" % [LOG_PREFIX, msg])
 
 
 func _exit_tree() -> void:
@@ -596,7 +618,7 @@ func _build_data_tab() -> void:
 	_data_pro_banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_data_pro_banner.add_theme_color_override("font_color", Color(1.0, 0.85, 0.55))
 	_data_pro_banner.visible = false
-	_data_pro_banner.text = "Pro feature: editing and committing changes is available in SaveState Pro. In Lite you can inspect saves, but edits are disabled."
+	_data_pro_banner.text = "Read-only in Lite."
 	vb.add_child(_data_pro_banner)
 
 	_data_status = Label.new()
@@ -790,9 +812,9 @@ func _sync_config_from_manager() -> void:
 		_cfg_gen_keys.disabled = not _pro_enabled
 	if _cfg_pro_hint != null:
 		if _pro_enabled:
-			_cfg_pro_hint.text = "Pro unlocked: encryption + verification, Live Sync, Saveable inspector, async thumbnails."
+			_cfg_pro_hint.text = "Pro enabled."
 		else:
-			_cfg_pro_hint.text = "Lite mode: Pro-only controls are shown but disabled. Enable the SaveState Pro plugin to unlock them."
+			_cfg_pro_hint.text = "Encryption and live editing require Pro."
 	_update_key_status()
 	if _data_tree != null:
 		_refill_data_tree()
@@ -808,8 +830,13 @@ func _update_key_status() -> void:
 		return
 	var aes_hex := str(ProjectSettings.get_setting("savestate_pro/aes_key_hex", ""))
 	var hmac_hex := str(ProjectSettings.get_setting("savestate_pro/hmac_key_hex", ""))
-	var has_aes := aes_hex.length() >= 64
-	var has_hmac := hmac_hex.length() >= 64
+	var manager := _get_save_manager()
+	var keys: Dictionary = manager.call("_get_debug_crypto_keys") if manager != null else {}
+	var has_aes: bool = keys.get("aes", PackedByteArray()).size() == 32
+	var has_hmac: bool = not keys.get("hmac", PackedByteArray()).is_empty()
+	if _cfg_gen_keys != null:
+		_cfg_gen_keys.disabled = not aes_hex.is_empty() or not hmac_hex.is_empty()
+		_cfg_gen_keys.tooltip_text = "Creates keys only when neither key is configured. Existing keys are never replaced here."
 	if has_aes and has_hmac:
 		_cfg_key_status.text = "Keys: installed (AES + HMAC)"
 		_cfg_key_status.add_theme_color_override("font_color", Color(0.55, 0.82, 0.55))
@@ -819,6 +846,11 @@ func _update_key_status() -> void:
 
 
 func _on_generate_keys_pressed() -> void:
+	if not _disk_mutation_allowed():
+		return
+	if not str(ProjectSettings.get_setting("savestate_pro/aes_key_hex", "")).is_empty() or not str(ProjectSettings.get_setting("savestate_pro/hmac_key_hex", "")).is_empty():
+		_toast_show("Keys already exist. Back them up; key rotation is not available yet.", "warn")
+		return
 	var crypto := Crypto.new()
 	var aes := crypto.generate_random_bytes(32)
 	var hmac := crypto.generate_random_bytes(32)
@@ -829,7 +861,7 @@ func _on_generate_keys_pressed() -> void:
 	ProjectSettings.set_setting("savestate_pro/encryption_enabled", true)
 	ProjectSettings.save()
 	_update_key_status()
-	_toast_show("Keys generated. Verification is now active for encrypted saves.", "ok")
+	_toast_show("Keys created. Encryption is enabled in Project Settings.", "ok")
 
 
 func _is_pro_manager(sm: SaveManagerBase) -> bool:
@@ -991,11 +1023,14 @@ func _on_explorer_activated(which: ItemList, index: int) -> void:
 	_log("explorer item_activated file=%s" % path)
 	_on_explorer_pick(path, which, index)
 	if _tabs != null:
-		_tabs.current_tab = 1
+		_tabs.current_tab = 2
 		_log("switched to Data tab (double-click / Enter)")
 
 
 func _on_explorer_pick(path: String, source_list: ItemList, row_index: int) -> void:
+	if _live_request_pending or (path != _data_path and not _data_pending.is_empty()):
+		_toast_show("Apply or discard the current edits before changing files.", "warn")
+		return
 	var sm := _get_save_manager()
 	if sm == null:
 		_log("explorer select: SaveManager still null (unexpected)")
@@ -1124,24 +1159,23 @@ func _on_open_selected_in_data() -> void:
 	if path.is_empty():
 		return
 	if _tabs != null:
-		_tabs.current_tab = 1
+		_tabs.current_tab = 2
 
 
 func _populate_data_tab(info: Dictionary) -> void:
+	if _live_request_pending or not _data_pending.is_empty():
+		return
 	_data_tree.clear()
 	_data_flat.clear()
 	_data_original_flat.clear()
 	_data_pending.clear()
 	_update_pending_ui()
 	if not info.get("ok", false):
-		_data_status.text = "Cannot edit: parse failed (try JSON mode or disable encryption for editor tools)."
+		_data_status.text = "Cannot read this save. Check its schema, file integrity, and encryption keys."
 		return
 
 	var inner: Dictionary = info.get("inner_dict", {}) as Dictionary
-	if inner.is_empty() and info.has("json_preview"):
-		var parsed: Variant = JSON.parse_string(str(info.get("json_preview", "{}")))
-		if parsed is Dictionary:
-			inner = parsed
+	_data_source_hash = str(info.get("source_hash", ""))
 	_data_flat = _flatten_for_editor(inner)
 	_data_original_flat = _data_flat.duplicate(true)
 	_reload_data_editor_hints()
@@ -1150,21 +1184,8 @@ func _populate_data_tab(info: Dictionary) -> void:
 	call_deferred("_refresh_data_color_picker_from_selection")
 
 
-func _flatten_for_editor(d: Dictionary, prefix: String = "") -> Dictionary:
-	var out := {}
-	for k in d:
-		var ks := str(k)
-		var path := ks if prefix.is_empty() else prefix + "." + ks
-		var v: Variant = d[k]
-		if v is Dictionary:
-			var sub := _flatten_for_editor(v, path)
-			for sk in sub:
-				out[sk] = sub[sk]
-		elif v is Array:
-			out[path] = JSON.stringify(v)
-		else:
-			out[path] = v
-	return out
+func _flatten_for_editor(d: Dictionary, _prefix: String = "") -> Dictionary:
+	return _edit_document.open(d)
 
 
 func _data_set_row_value_visual(it: TreeItem, key: String, v: Variant) -> void:
@@ -1186,7 +1207,7 @@ func _refill_data_tree() -> void:
 	var q := _data_search.text.strip_edges().to_lower()
 	var keys: Array = _data_flat.keys()
 	keys.sort()
-	var allow_edit := _pro_enabled
+	var allow_edit := _pro_enabled and not _live_request_pending and not _data_path.ends_with(".bak")
 	for k in keys:
 		if not q.is_empty() and not str(k).to_lower().contains(q):
 			continue
@@ -1196,14 +1217,13 @@ func _refill_data_tree() -> void:
 		_data_set_row_value_visual(it, ks, _data_flat[k])
 		it.set_editable(DATA_COL_KEY, false)
 		it.set_editable(DATA_COL_SWATCH, false)
-		it.set_editable(DATA_COL_VALUE, allow_edit)
+		it.set_editable(DATA_COL_VALUE, allow_edit and SaveStateEditDocument.can_edit_text(_data_flat[k]))
+		if not SaveStateEditDocument.can_edit_text(_data_flat[k]):
+			it.set_tooltip_text(DATA_COL_VALUE, "This type is preserved. Use the color picker where available; other structured types are read-only.")
 
 
 func _value_to_edit_string(v: Variant) -> String:
-	var t := typeof(v)
-	if t == TYPE_BOOL or t == TYPE_INT or t == TYPE_FLOAT or t == TYPE_STRING:
-		return str(v)
-	return JSON.stringify(v)
+	return str(v) if SaveStateEditDocument.can_edit_text(v) else var_to_str(v)
 
 
 func _on_data_search_changed(_t: String) -> void:
@@ -1224,7 +1244,15 @@ func _on_data_tree_edited() -> void:
 		return
 	var k := str(it.get_text(DATA_COL_KEY))
 	var vstr := str(it.get_text(DATA_COL_VALUE))
-	var v := _parse_value_string(vstr)
+	if _live_request_pending or _data_path.ends_with(".bak"):
+		_data_set_row_value_visual(it, k, _data_flat[k])
+		return
+	var parsed := SaveStateEditDocument.parse_text(vstr, _data_flat[k])
+	if not parsed["ok"]:
+		_data_status.text = "Enter a value of the existing type."
+		_data_set_row_value_visual(it, k, _data_flat[k])
+		return
+	var v: Variant = parsed["value"]
 	_data_flat[k] = v
 	var had_orig := _data_original_flat.has(k)
 	var orig := _data_original_flat.get(k, null)
@@ -1273,8 +1301,17 @@ func _on_data_tree_gui_input(event: InputEvent) -> void:
 
 
 func _data_row_should_show_color_ui(key: String, v: Variant) -> bool:
-	if _data_editor_hints.has(key):
-		var h := int(_data_editor_hints[key])
+	var hint_key := key
+	if not _data_editor_hints.has(hint_key):
+		var parts := PackedStringArray()
+		for segment in _edit_document.paths.get(key, []):
+			if not segment.has("key") or not (segment["key"] is String or segment["key"] is StringName) or str(segment["key"]).contains("."):
+				parts.clear()
+				break
+			parts.append(str(segment["key"]))
+		hint_key = ".".join(parts)
+	if _data_editor_hints.has(hint_key):
+		var h := int(_data_editor_hints[hint_key])
 		if h == 1:
 			return _dock_is_color_like(v)
 		return false
@@ -1315,7 +1352,7 @@ func _open_color_picker_from_swatch(item: TreeItem) -> void:
 
 
 func _on_data_color_picker_changed(new_color: Color) -> void:
-	if _data_color_changing or _data_color_bound_key.is_empty():
+	if _data_color_changing or _data_color_bound_key.is_empty() or _live_request_pending or _data_path.ends_with(".bak"):
 		return
 	if not _pro_enabled:
 		return
@@ -1413,12 +1450,14 @@ func _update_pending_ui() -> void:
 	if _data_pending_label != null:
 		_data_pending_label.text = "Pending: %d" % _data_pending.size()
 	if _data_discard_btn != null:
-		_data_discard_btn.disabled = _data_pending.is_empty() or not _pro_enabled
+		_data_discard_btn.disabled = _data_pending.is_empty() or not _pro_enabled or _live_request_pending or _data_path.ends_with(".bak")
 	if _data_apply_btn != null:
-		_data_apply_btn.disabled = _data_pending.is_empty() or not _pro_enabled
+		_data_apply_btn.disabled = _data_pending.is_empty() or not _pro_enabled or _live_request_pending or _data_path.ends_with(".bak")
 
 
 func _on_data_discard() -> void:
+	if _live_request_pending:
+		return
 	if _data_original_flat.is_empty():
 		return
 	_data_flat = _data_original_flat.duplicate(true)
@@ -1436,7 +1475,7 @@ func _on_live_sync_toggled(on: bool) -> void:
 		else:
 			_data_apply_btn.remove_theme_color_override("font_color")
 	if on:
-		_toast_show("Live Sync enabled", "warn")
+		_toast_show("Runtime edits change memory only. Save from the game to persist them.", "warn")
 
 
 func _parse_value_string(s: String) -> Variant:
@@ -1463,62 +1502,91 @@ func _variant_neq(a: Variant, b: Variant) -> bool:
 
 
 func _on_data_apply() -> void:
-	if _data_path.is_empty():
-		_data_status.text = "No file selected."
+	if not _pro_enabled or _live_request_pending:
+		return
+	if _data_path.is_empty() or _data_path.ends_with(".bak"):
+		_data_status.text = "Select a main save. Backups are read-only."
+		return
+	if _data_live_sync != null and _data_live_sync.button_pressed:
+		_try_send_live_patch(_data_pending)
+		return
+	if not _disk_mutation_allowed():
+		return
+	var result := _edit_document.candidate(_data_flat)
+	if int(result["error"]) != OK:
+		_data_status.text = "Changes could not be validated. Reload the save."
 		return
 	var sm := _get_save_manager()
 	if sm == null:
-		_data_status.text = "SaveManager missing."
+		_data_status.text = "SaveManager is unavailable."
 		return
-	var inner := _unflatten_from_flat(_data_flat)
-	_log("data apply: writing inner dict keys=%d path=%s" % [_data_flat.size(), _data_path])
-	var err: Error = sm.write_inner_data_to_disk(_data_path, inner) as Error
-	if err != OK:
-		_log("data apply: FAILED %s" % error_string(err))
-		_data_status.text = "Write failed: %s" % error_string(err)
-		_toast_show("Write failed: %s" % error_string(err), "err")
+	var error := sm.write_edited_data_to_disk(_data_path, result["data"], _data_source_hash)
+	if error != OK:
+		_data_status.text = "The save changed on disk. Reload before editing." if error == ERR_BUSY else "Save failed: " + error_string(error)
+		_toast_show(_data_status.text, "err")
 		return
-	_log("data apply: OK")
-	_data_status.text = "Saved OK. Refresh Explorer to verify."
-	_toast_show("Saved OK", "ok")
-	if _data_live_sync != null and _data_live_sync.button_pressed and not _data_pending.is_empty():
-		_try_send_live_patch(_data_pending)
+	_data_source_hash = FileAccess.get_sha256(_data_path)
+	_data_flat = _edit_document.open(result["data"])
 	_data_original_flat = _data_flat.duplicate(true)
 	_data_pending.clear()
 	_update_pending_ui()
+	_data_status.text = "Changes saved to disk."
+	_toast_show("Changes saved", "ok")
 	_on_refresh()
 
 
-func _try_send_live_patch(patch: Dictionary) -> void:
-	if patch.is_empty():
+func _try_send_live_patch(_patch: Dictionary) -> void:
+	if _dbg_plugin == null or not _dbg_plugin.has_method("request_patch"):
+		_data_status.text = "Start one debug session to edit runtime values."
 		return
-	if _dbg_plugin == null or not _dbg_plugin.has_method("send_kv_patch"):
-		_toast_show("Live Sync: debugger plugin unavailable", "warn")
+	var operations := _edit_document.operations(_data_flat)
+	if operations.is_empty():
 		return
-	var ok: bool = bool(_dbg_plugin.call("send_kv_patch", patch))
-	if ok:
-		_toast_show("Live Sync: patched running game", "ok")
+	_live_request_pending = true
+	if not bool(_dbg_plugin.call("request_patch", _data_path, operations)):
+		_live_request_pending = false
+		_data_status.text = "Connect exactly one debug session and try again."
 	else:
-		_toast_show("Live Sync: no running game session", "warn")
+		_data_status.text = "Waiting for the running game."
+	_update_pending_ui()
+	_refill_data_tree()
+
+
+func _on_live_patch_finished(error: int, _revision: int) -> void:
+	_live_request_pending = false
+	if error == OK:
+		var result := _edit_document.candidate(_data_flat)
+		_data_flat = _edit_document.open(result["data"])
+		_data_original_flat = _data_flat.duplicate(true)
+		_data_pending.clear()
+		_data_status.text = "Applied to the running game. Not saved to disk."
+	else:
+		_data_status.text = "Runtime values changed; reload before trying again." if error == ERR_BUSY else "Runtime edit failed: " + error_string(error)
+	_update_pending_ui()
+	_refill_data_tree()
+
+
+func _disk_mutation_allowed() -> bool:
+	var running := _dbg_plugin != null and _dbg_plugin.has_method("has_active_session") and bool(_dbg_plugin.call("has_active_session"))
+	if Engine.is_editor_hint():
+		running = running or EditorInterface.is_playing_scene()
+	if running:
+		_toast_show("Stop the running game before changing save files. Runtime edits only change memory.", "warn")
+		return false
+	if SaveStateCoordinator.occupied(_get_save_root()):
+		_toast_show("A save operation is in progress. Wait for it to finish before changing files.", "warn")
+		return false
+	return true
 
 
 func _unflatten_from_flat(flat: Dictionary) -> Dictionary:
-	var root := {}
-	for k in flat:
-		var parts: PackedStringArray = str(k).split(".")
-		var cur: Dictionary = root
-		for i in range(parts.size()):
-			var part := parts[i]
-			if i == parts.size() - 1:
-				cur[part] = flat[k]
-			else:
-				if not cur.has(part) or not (cur[part] is Dictionary):
-					cur[part] = {}
-				cur = cur[part]
-	return root
+	var result := _edit_document.candidate(flat)
+	return result.get("data", {})
 
 
 func _on_restore_backup() -> void:
+	if not _disk_mutation_allowed():
+		return
 	var path := _get_selected_save_path()
 	if path.is_empty():
 		_json.text = "Select a file first."
@@ -1534,7 +1602,7 @@ func _on_restore_backup() -> void:
 	if sm != null:
 		err = sm.restore_from_backup_file(main_path) as Error
 	else:
-		err = _restore_backup_files_direct(main_path)
+		err = ERR_UNCONFIGURED
 	if err != OK:
 		_json.text = "Restore failed: %s" % error_string(err)
 		_toast_show("Restore failed: %s" % error_string(err), "err")
@@ -1545,6 +1613,8 @@ func _on_restore_backup() -> void:
 
 
 func _on_backup_selected_now() -> void:
+	if not _disk_mutation_allowed():
+		return
 	var path := _get_selected_save_path()
 	if path.is_empty():
 		_toast_show("Select a main save first.", "warn")
@@ -1566,18 +1636,9 @@ func _on_backup_selected_now() -> void:
 	_on_refresh()
 
 
-static func _restore_backup_files_direct(main_path: String) -> Error:
-	var bak_path := main_path + ".bak"
-	if not FileAccess.file_exists(bak_path):
-		return ERR_FILE_NOT_FOUND
-	if FileAccess.file_exists(main_path):
-		var rm := DirAccess.remove_absolute(main_path)
-		if rm != OK:
-			return rm
-	return DirAccess.rename_absolute(bak_path, main_path)
-
-
 func _on_delete_selected() -> void:
+	if not _disk_mutation_allowed():
+		return
 	var path := _get_selected_save_path()
 	if path.is_empty():
 		return
@@ -1651,6 +1712,8 @@ func _try_rename_related_files(main_from: String, main_to: String) -> void:
 
 
 func _on_rename_pressed() -> void:
+	if not _disk_mutation_allowed():
+		return
 	var selected := _get_selected_save_path()
 	if selected.is_empty():
 		_toast_show("Rename: select a save first.", "warn")
@@ -1696,16 +1759,13 @@ func _on_rename_pressed() -> void:
 
 
 func _resolve_autoload_script_path() -> String:
-	var v := ProjectSettings.get_setting("autoload/SaveManager", "")
-	var s := str(v)
-	if s.begins_with("*"):
-		var uid_or := s.trim_prefix("*")
-		var p := ResourceUID.uid_to_path(uid_or)
-		if not p.is_empty():
-			return p
-		_log("uid_to_path failed for %s; falling back to Lite script" % uid_or)
+	var path := str(ProjectSettings.get_setting("autoload/SaveManager", "")).trim_prefix("*")
+	if path.begins_with("uid://"):
+		var id := ResourceUID.text_to_id(path)
+		if id != ResourceUID.INVALID_ID and ResourceUID.has_id(id):
+			return ResourceUID.get_id_path(id)
 		return SCRIPT_LITE_PATH
-	return s
+	return path if not path.is_empty() else SCRIPT_LITE_PATH
 
 
 func _find_save_manager_under(n: Node) -> SaveManagerBase:
@@ -1729,9 +1789,6 @@ func _create_editor_tool_manager() -> SaveManagerBase:
 	if mgr == null:
 		_log("script.new() failed; using SCRIPT_LITE")
 		mgr = SCRIPT_LITE.new() as SaveManagerBase
-	if _is_pro_manager(mgr):
-		mgr.set("encryption_enabled", bool(ProjectSettings.get_setting("savestate_pro/encryption_enabled", false)))
-		_log("Pro mirror encryption_enabled=%s" % str(mgr.get("encryption_enabled")))
 	mgr._ready()
 	_log(
 		"editor tool manager ready path=%s save_root=%s use_json=%s backup_on_commit=%s"
@@ -1773,6 +1830,7 @@ func _get_save_manager() -> SaveManagerBase:
 		var sm0 := direct as SaveManagerBase
 		_update_manager_status_line(sm0, "autoload /root/SaveManager")
 		return sm0
+	if Engine.is_editor_hint(): return _get_or_create_editor_tool_manager()
 	var found := _find_save_manager_under(st.root)
 	if found != null:
 		if _cached_tool_manager != null:

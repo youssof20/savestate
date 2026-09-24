@@ -1,0 +1,28 @@
+name: Test Lite
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  release-check:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        godot: ["4.5.2", "4.6.3", "4.7.2"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Godot
+        env:
+          VERSION: ${{ matrix.godot }}
+        shell: pwsh
+        run: |
+          $archive = "Godot_v${env:VERSION}-stable_win64.exe.zip"
+          Invoke-WebRequest "https://github.com/godotengine/godot-builds/releases/download/${env:VERSION}-stable/$archive" -OutFile engine.zip
+          Expand-Archive engine.zip engine
+      - name: Test extracted release
+        env:
+          VERSION: ${{ matrix.godot }}
+        shell: pwsh
+        run: python tools/test_release.py --godot "engine/Godot_v${env:VERSION}-stable_win64_console.exe"

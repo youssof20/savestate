@@ -39,6 +39,7 @@ func apply_snapshot(data: Dictionary) -> void:
 	var target: Node = get_parent() if get_parent() else self
 	for key in data:
 		var ks := str(key)
+		if ks not in tracked_properties or ks == "script": continue
 		var found := false
 		for p in target.get_property_list():
 			if str(p.get("name", "")) == ks:

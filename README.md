@@ -1,78 +1,48 @@
-# SaveState Lite
+# SaveState Lite 2.0
 
-[![Hand-tested](https://img.shields.io/badge/Hand--tested-Godot%204.3%E2%80%934.6-success)](#godot-version-support)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+A save system for Godot: named saves, checkpoints, autosave, recovery history, and an editor dock for inspecting data. Free and MIT licensed.
 
-Godot 4 addon: **atomic** save files, rolling **`.bak`** backups, **schema versioning** with forward merge, and one **`SaveManager`** autoload for key–value data and named slots — without building a custom format from scratch.
+## Install
 
-**Docs:** [Quick start](QUICKSTART.md) · [Full API](docs/API.md) · [Architecture & threading](docs/ARCHITECTURE.md) · [Migration (incl. `migration_required`)](docs/MIGRATION.md) · [Starter sample](samples/minimal-demo/README.md)
+Copy `addons/savestate` into your project and enable **SaveState (Lite)** in **Project → Project Settings → Plugins**. This adds the `SaveManager` autoload and the **SaveState** dock.
 
-**v1.2:** typed `register_key` (with optional Save Browser color hints), `register_editor_hint`, debounced `mark_dirty`, `set_schema_migrations`, JSON export, `SaveComponent` / `CollectionLink` / `SaveStatePickupVacuum`, slot import/export helpers, Save Browser color picker + `SaveStateUnixDisplay`, `save_menu_lite.tscn`, and Pro `templates/save_menu_pro.tscn`.
+To try the demo, open this repository's `project.godot` and press F5. The addon is already included. Move with the arrow keys, change a value, save, then restart to resume.
 
----
+## First save
 
-## Why this exists
-
-Godot projects often start with ad-hoc `FileAccess` writes. That becomes painful fast: torn writes after crashes, no backup story, and no clean way to evolve save data when you add fields. SaveState Lite centralizes **atomic commits** (write to temp → validate → rename), **optional `.bak`**, and a **single schema number** with merge-from-defaults for older files.
-
-**Technical challenges baked in:** careful ordering with temp files and rename for atomicity; keeping async Pro saves safe by **snapshotting on the main thread** before `WorkerThreadPool` I/O (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)); and editor/plugin ordering so Lite loads before Pro when both are enabled.
-
-See [CHANGELOG.md](CHANGELOG.md) — each version lists **Lite** (this repo) and **Pro** ([itch.io](https://chuumberry.itch.io/savestate-pro)) separately.
-
----
-
-## Installation
-
-The **repository root** is not a Godot project (there is no `project.godot` there). Either open **`samples/minimal-demo`** after you copy the addon into it (see that folder’s README), or copy **`addons/savestate/`** into **your** game project’s `addons/` folder.
-
-1. Copy the `addons/savestate/` folder into your Godot project (merge with `addons/`).
-2. **Project → Project Settings → Plugins** → enable **SaveState (Lite)**.
-3. The **SaveManager** autoload is registered (`res://addons/savestate/save_manager.gd`).
-
-**SaveState Pro** (paid, separate from this repo) requires both Lite and the Pro plugin folder in your project. See [itch.io](https://chuumberry.itch.io/savestate-pro).
-
-**GitHub Releases** attach **`savestate-lite-<tag>.zip`** (drop-in `addons/savestate/`). Pushing a new tag `v*` triggers Actions to open the release and upload the zip. To **create or refresh** releases for existing tags (notes + zip), run **`tools/publish_github_releases.ps1`** from the repo root with **`GITHUB_TOKEN`** set to a PAT with repo **Contents** read/write (see the script header).
-
----
-
-## Quick start
+Attach this script to a Node and run its scene:
 
 ```gdscript
-SaveManager.set_value(&"player_gold", 250)
-SaveManager.persist()
+extends Node
+
+func _ready() -> void:
+    var started := SaveManager.start_session()
+    if not started.ok:
+        push_error(started.message)
+        return
+
+    var coins := int(SaveManager.get_value(&"coins", 0))
+    print("Loaded coins: ", coins)
+    SaveManager.set_value(&"coins", coins + 10)
+    var saved := await SaveManager.save_game()
+    if not saved.ok:
+        push_error(saved.message)
+        return
+    print("Saved coins: ", coins + 10)
 ```
 
-```gdscript
-var player_gold := int(SaveManager.get_value(&"player_gold", 0))
-```
+Run once to save 10 coins, then restart to load 10 and save 20. Open **SaveState → Saved games** to inspect the same data. The dock refreshes automatically.
 
-```gdscript
-SaveManager.save_to_slot_sync(&"slot_1", {"player_health": 100})
-var data := SaveManager.load_from_slot_sync(&"slot_1")
-```
+## What changed in v2
 
-More patterns: **[QUICKSTART.md](QUICKSTART.md)**. Full method list: **[docs/API.md](docs/API.md)**.
+- Named playthroughs and checkpoints with retained generations for recovery.
+- Saves appear directly in the editor, with nested data and history inspection.
+- Failed loads report errors instead of silently replacing state.
+- Autosave batches changes, limits retries, and reports failures.
+- The included demo opens directly from a checkout or release ZIP.
 
----
+See the [usage guide](GUIDE.md) for checkpoints, saved node properties, recovery, and upgrading v1 projects.
 
-## Saving nodes (Lite)
+Lite saves synchronously and its editor is read-only. [SaveState Pro](https://chuumberry.itch.io/savestate-pro) adds managed worlds, multiple profiles, visual editing/recovery, migration previews, background writes, and encryption. Pro includes the required Lite core.
 
-Lite does not ship a `Saveable` node in this repo. Nodes in group `savestate_saveable` that implement **`get_storage_key`**, **`collect_snapshot`**, and **`apply_snapshot`** participate in `persist_including_saveables()` / `load_from_slot_and_apply_saveables()`. The **Saveable** node and inspector tooling ship with **SaveState Pro**: [SaveState Pro on itch.io](https://chuumberry.itch.io/savestate-pro).
-
----
-
-## Pro version
-
-Pro swaps the autoload for `pro_manager.gd`, adds async save/load, optional AES-256 + HMAC, thumbnails, **Save Browser** dock extras, Saveable inspector, and Quick Setup menu entries. Details: [https://chuumberry.itch.io/savestate-pro](https://chuumberry.itch.io/savestate-pro)
-
----
-
-## Godot version support
-
-Godot **4.3**, **4.4**, **4.5**, and **4.6** are tested and supported. The addons use stable 4.x APIs (`DirAccess.remove_absolute`, `FileAccess.get_modified_time`, `Time.get_datetime_string_from_unix_time`, `ColorPickerButton`, etc.) as documented for those versions; Lite and Pro `plugin.cfg` files note this range.
-
----
-
-## License
-
-Lite is MIT licensed. Use it in any project, commercial or otherwise, with no attribution required.
+Tested on Windows with Godot **4.5.2, 4.6.3, and 4.7.2**. See [LICENSE](LICENSE); retain its notice when redistributing the source.

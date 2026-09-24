@@ -23,14 +23,14 @@ offset_bottom = 80.0
 theme_override_constants/separation = 8
 
 [node name="Title" type="Label" parent="Center/Panel/VBox"]
-text = "Save (template)"
+text = "Save game"
 horizontal_alignment = 1
 
 [node name="SaveBtn" type="Button" parent="Center/Panel/VBox"]
-text = "Quick save (slot_0)"
+text = "Save"
 
 [node name="LoadBtn" type="Button" parent="Center/Panel/VBox"]
-text = "Quick load (slot_0)"
+text = "Load"
 
 [connection signal="pressed" from="Center/Panel/VBox/SaveBtn" to="." method="_on_quick_save_pressed"]
 [connection signal="pressed" from="Center/Panel/VBox/LoadBtn" to="." method="_on_quick_load_pressed"]

@@ -15,6 +15,7 @@ func _physics_process(_delta: float) -> void:
 	var input := Input.get_vector(&"ui_left", &"ui_right", &"ui_up", &"ui_down")
 	velocity = input * SPEED
 	move_and_slide()
+	position = position.clamp(Vector2(380, 70), Vector2(960, 550))
 
 
 func _draw() -> void:

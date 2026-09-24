@@ -4,12 +4,17 @@ class_name CollectionLink
 
 const KV_COLLECTED: StringName = &"__savestate_collected_ids"
 
+enum RemovalTarget { SELF, PARENT }
+## Explicit legacy removal target. Managed worlds should use destroy_entity().
+@export var removal_target: RemovalTarget = RemovalTarget.SELF
+
 @export var collection_id: StringName = &"coin_main_01"
 
 
 func _ready() -> void:
 	if _is_already_collected():
-		queue_free()
+		var target: Node = get_parent() if removal_target == RemovalTarget.PARENT else self
+		if target != null: target.queue_free()
 
 
 func _is_already_collected() -> bool:

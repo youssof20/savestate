@@ -1,0 +1,25 @@
+config_version=5
+
+[application]
+config/name="SaveState Lite Demo"
+run/main_scene="res://samples/minimal-demo/main.tscn"
+config/features=PackedStringArray("4.5", "GL Compatibility")
+config/icon="res://icon.png"
+
+[autoload]
+SaveManager="*res://addons/savestate/save_manager.gd"
+
+[display]
+window/size/viewport_width=1000
+window/size/viewport_height=600
+window/stretch/mode="canvas_items"
+
+[editor_plugins]
+enabled=PackedStringArray("res://addons/savestate/plugin.cfg")
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.07, 0.1, 0.12, 1)
+
+[savestate]
+save_root="user://savestate-lite-demo-v2"

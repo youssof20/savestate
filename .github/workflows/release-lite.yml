@@ -1,72 +1,26 @@
-# Creates a GitHub Release for each version tag (if missing) and uploads savestate-lite-<tag>.zip.
-# Tags alone do not show under "Releases" until a Release exists — this workflow does that.
-#
-# Triggers:
-#   - push tag matching v* (normal flow: git tag v1.2.3 && git push origin v1.2.3)
-#   - workflow_dispatch: enter an existing tag to backfill a Release + zip for old tags
-#
-# Not too late: run "Actions" → this workflow → "Run workflow" with tag v1.1.0 (etc.) to create missing Releases.
-
-name: Release Lite ZIP
+name: Release Lite
 
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing tag (e.g. v1.1.0) — creates Release + zip if missing"
-        required: true
-        type: string
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
-  zip-lite:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Resolve ref
-        id: ref
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=refs/tags/${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ github.ref }}" >> "$GITHUB_OUTPUT"
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout tag
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.ref.outputs.ref }}
-
-      - name: Create GitHub Release if it does not exist
+      - uses: actions/checkout@v4
+      - name: Check version and build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG="${{ steps.ref.outputs.tag }}"
-          REPO="${{ github.repository }}"
-          if gh release view "$TAG" --repo "$REPO" 2>/dev/null; then
-            echo "Release $TAG already exists — will only refresh zip asset."
-          else
-            gh release create "$TAG" \
-              --repo "$REPO" \
-              --title "SaveState Lite ${TAG}" \
-              --notes "See [CHANGELOG.md](https://github.com/${REPO}/blob/main/CHANGELOG.md) for Lite and Pro notes."
-          fi
-
-      - name: Zip addons/savestate
-        run: |
-          TAG="${{ steps.ref.outputs.tag }}"
-          zip -r "savestate-lite-${TAG}.zip" addons/savestate/
-
-      - name: Upload zip to release
+          python -c 'import os, sys; sys.path.insert(0, "tools"); from build_release import version; assert os.environ["TAG"] == "v" + version(), "Tag and plugin version differ"'
+          python tools/build_release.py
+      - name: Publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG="${{ steps.ref.outputs.tag }}"
-          REPO="${{ github.repository }}"
-          gh release upload "$TAG" "savestate-lite-${TAG}.zip" --repo "$REPO" --clobber
+          gh release create "$TAG" dist/*.zip dist/*.sha256 --verify-tag --title "SaveState Lite $TAG" --notes-file CHANGELOG.md
